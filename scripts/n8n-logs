@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+cd /opt/one-shot-n8n
+docker compose logs -f --tail=200 n8n
