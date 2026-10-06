@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+STACK_DIR=/opt/one-shot-n8n
+DATA_DIR=/var/lib/one-shot-n8n
+BACKUP_DIR=/var/backups/one-shot-n8n
+mkdir -p "$BACKUP_DIR"
+cd "$STACK_DIR"
+source .env
+stamp="$(date -u +%Y%m%d-%H%M%S)"
+archive="$BACKUP_DIR/n8n-${N8N_VERSION}-${stamp}.tar.gz"
+
+echo "Stopping n8n for a consistent SQLite backup..."
+docker compose stop n8n
+started=1
+trap 'if [[ $started == 1 ]]; then docker compose start n8n >/dev/null 2>&1 || true; fi' EXIT
+
+tar -C "$DATA_DIR" -czf "$archive" .
+cp .env "${archive%.tar.gz}.env"
+chmod 600 "$archive" "${archive%.tar.gz}.env"
+
+docker compose start n8n
+started=0
+
+mapfile -t backups < <(ls -1t "$BACKUP_DIR"/*.tar.gz 2>/dev/null || true)
+for ((i=5; i<${#backups[@]}; i++)); do
+  rm -f "${backups[$i]}" "${backups[$i]%.tar.gz}.env"
+done
+
+printf 'Backup created: %s\n' "$archive"
