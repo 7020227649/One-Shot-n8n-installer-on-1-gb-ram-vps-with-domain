@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+STACK_DIR=/opt/one-shot-n8n
+DATA_DIR=/var/lib/one-shot-n8n
+BACKUP_DIR=/var/backups/one-shot-n8n
+NGINX_CONF=/etc/nginx/conf.d/one-shot-n8n.conf
+
+echo "This removes the n8n container, Compose files, Nginx config, and helper commands."
+echo "It PRESERVES: $DATA_DIR and $BACKUP_DIR"
+read -r -p "Type REMOVE to continue: " answer
+[[ $answer == REMOVE ]] || { echo "Cancelled."; exit 0; }
+
+cd "$STACK_DIR"
+docker compose down || true
+rm -f "$NGINX_CONF"
+rm -f /etc/letsencrypt/renewal-hooks/deploy/one-shot-n8n-nginx
+nginx -t >/dev/null 2>&1 && systemctl reload nginx || true
+for cmd in n8n-version n8n-status n8n-logs n8n-restart n8n-backup n8n-update n8n-restore n8n-uninstall; do rm -f "/usr/local/bin/$cmd"; done
+rm -rf "$STACK_DIR"
+echo "n8n stack removed; data and backups were preserved."
