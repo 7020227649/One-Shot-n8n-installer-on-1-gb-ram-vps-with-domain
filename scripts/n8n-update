@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+STACK_DIR=/opt/one-shot-n8n
+DATA_DIR=/var/lib/one-shot-n8n
+BACKUP_DIR=/var/backups/one-shot-n8n
+cd "$STACK_DIR"
+source .env
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+latest_stable() {
+  curl -fsSL \
+    -H 'Accept: application/vnd.github+json' \
+    -H 'User-Agent: one-shot-n8n-installer' \
+    'https://api.github.com/repos/n8n-io/n8n/releases?per_page=30' |
+    python3 -c '
+import json, sys
+for r in json.load(sys.stdin):
+    if not r.get("draft") and not r.get("prerelease"):
+        print(r["tag_name"].split("@", 1)[-1].lstrip("v"))
+        break
+else:
+    raise SystemExit("No stable n8n release found")
+'
+}
+valid_version() { [[ $1 =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; }
+[[ -n ${N8N_VERSION:-} && -n ${N8N_DOMAIN:-} && -n ${N8N_DATA_DIR:-} ]] || die "Invalid .env file."
+
+target="${1:-}"
+if [[ -z $target ]]; then
+  echo "Checking latest stable n8n release..."
+  target="$(latest_stable)"
+fi
+valid_version "$target" || die "Invalid n8n version: $target"
+
+if [[ $target == "$N8N_VERSION" ]]; then
+  echo "Already running n8n $N8N_VERSION."
+  exit 0
+fi
+
+echo "Current version: $N8N_VERSION"
+echo "Target version:  $target"
+echo
+read -r -p "Continue with backup + update? [y/N] " answer
+[[ $answer =~ ^[Yy]$ ]] || { echo "Cancelled."; exit 0; }
+
+old_version="$N8N_VERSION"
+stamp="$(date -u +%Y%m%d-%H%M%S)"
+backup="$BACKUP_DIR/pre-update-${old_version}-${stamp}.tar.gz"
+failed_state="$BACKUP_DIR/failed-update-${target}-${stamp}.tar.gz"
+mkdir -p "$BACKUP_DIR"
+
+echo "Pulling n8n $target image..."
+N8N_VERSION="$target" docker compose pull n8n >/dev/null
+
+echo "Stopping n8n..."
+docker compose stop n8n
+restore_old=1
+trap 'if [[ $restore_old == 1 ]]; then docker compose start n8n >/dev/null 2>&1 || true; fi' EXIT
+
+echo "Creating consistent pre-update backup..."
+tar -C "$DATA_DIR" -czf "$backup" .
+cp .env "${backup%.tar.gz}.env"
+chmod 600 "$backup" "${backup%.tar.gz}.env"
+
+sed -i -E "s/^N8N_VERSION=.*/N8N_VERSION=${target}/" .env
+
+echo "Starting n8n $target..."
+docker compose up -d --force-recreate n8n >/dev/null
+
+echo "Waiting for database migrations/readiness..."
+ready=0
+for _ in $(seq 1 100); do
+  if curl -fsS --max-time 5 http://127.0.0.1:5678/healthz/readiness >/dev/null 2>&1; then ready=1; break; fi
+  sleep 3
+done
+
+if (( ready == 1 )); then
+  restore_old=0
+  docker image rm "n8nio/n8n:${old_version}" >/dev/null 2>&1 || true
+  echo
+  echo "✓ n8n updated successfully: ${old_version} -> ${target}"
+  echo "Backup: $backup"
+  exit 0
+fi
+
+echo "New version failed readiness; capturing failed state and restoring the pre-update backup..." >&2
+docker compose logs --tail=200 n8n >&2 || true
+docker compose down >/dev/null 2>&1 || true
+
+tar -C "$DATA_DIR" -czf "$failed_state" . 2>/dev/null || true
+chmod 600 "$failed_state" 2>/dev/null || true
+find "$DATA_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+tar -C "$DATA_DIR" -xzf "$backup"
+chown -R 1000:1000 "$DATA_DIR"
+sed -i -E "s/^N8N_VERSION=.*/N8N_VERSION=${old_version}/" .env
+
+echo "Starting restored n8n $old_version..."
+docker compose up -d n8n >/dev/null
+rollback_ready=0
+for _ in $(seq 1 60); do
+  if curl -fsS --max-time 5 http://127.0.0.1:5678/healthz/readiness >/dev/null 2>&1; then rollback_ready=1; break; fi
+  sleep 3
+done
+
+if (( rollback_ready == 1 )); then
+  restore_old=0
+  echo "✓ Update rolled back successfully; n8n $old_version is running again." >&2
+  echo "Pre-update backup: $backup" >&2
+  echo "Failed-update snapshot: $failed_state" >&2
+  exit 1
+fi
+
+restore_old=0
+die "Update and automatic rollback both failed. Restore manually from: $backup"
