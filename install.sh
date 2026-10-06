@@ -36,10 +36,23 @@ check_system() {
   log "Ubuntu 22.04 $(dpkg --print-architecture), ${ram_mb} MB RAM detected."
 }
 
+prompt_for_details() {
+  [[ -r /dev/tty ]] || die "Domain and email are required. Usage: $0 <domain> <email>"
+  printf '\nOne-Shot n8n Installer\n'
+  printf 'Enter the domain that already points to this VPS and an email for Let\047s Encrypt.\n\n'
+  read -r -p 'Domain (example: n8n.example.com): ' DOMAIN </dev/tty
+  read -r -p 'Email  (example: you@example.com): ' EMAIL </dev/tty
+  [[ -n $DOMAIN && -n $EMAIL ]] || die "Domain and email cannot be empty."
+}
+
 validate_args() {
-  [[ $# -eq 2 ]] || die "Usage: $0 <domain> <email>"
-  DOMAIN="$1"
-  EMAIL="$2"
+  [[ $# -eq 0 || $# -eq 2 ]] || die "Usage: $0 [domain email]"
+  if [[ $# -eq 0 ]]; then
+    prompt_for_details
+  else
+    DOMAIN="$1"
+    EMAIL="$2"
+  fi
   [[ $DOMAIN =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$ ]] || die "Invalid domain: $DOMAIN"
   [[ $EMAIL =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || die "Invalid email: $EMAIL"
 }
