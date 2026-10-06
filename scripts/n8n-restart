@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+cd /opt/one-shot-n8n
+docker compose restart n8n
