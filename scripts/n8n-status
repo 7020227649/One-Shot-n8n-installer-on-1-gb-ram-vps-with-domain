@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+cd /opt/one-shot-n8n
+source .env
+printf 'n8n version: %s\n' "$N8N_VERSION"
+printf 'Domain:      %s\n\n' "$N8N_DOMAIN"
+printf 'Containers:\n'
+docker compose ps
+printf '\nReadiness:\n'
+if curl -fsS --max-time 5 http://127.0.0.1:5678/healthz/readiness >/dev/null; then printf 'READY\n'; else printf 'NOT READY\n'; fi
+printf '\nMemory:\n'
+free -h
+printf '\nDocker memory:\n'
+docker stats --no-stream one-shot-n8n 2>/dev/null || true
