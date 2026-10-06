@@ -1,0 +1,39 @@
+services:
+  n8n:
+    image: n8nio/n8n:${N8N_VERSION}
+    container_name: one-shot-n8n
+    restart: unless-stopped
+    init: true
+    mem_limit: ${N8N_MEMORY_LIMIT_MB}m
+    memswap_limit: ${N8N_MEMORY_SWAP_LIMIT_MB}m
+    stop_grace_period: 60s
+    ports:
+      - "127.0.0.1:5678:5678"
+    environment:
+      N8N_HOST: ${N8N_DOMAIN}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: https
+      N8N_EDITOR_BASE_URL: https://${N8N_DOMAIN}/
+      N8N_WEBHOOK_URL: https://${N8N_DOMAIN}/
+      N8N_SECURE_COOKIE: "true"
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      EXECUTIONS_MODE: regular
+      N8N_CONCURRENCY_PRODUCTION_LIMIT: ${N8N_CONCURRENCY}
+      EXECUTIONS_DATA_SAVE_ON_SUCCESS: none
+      EXECUTIONS_DATA_SAVE_ON_ERROR: all
+      EXECUTIONS_DATA_SAVE_ON_PROGRESS: "false"
+      EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS: "false"
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: ${N8N_EXECUTION_MAX_AGE_HOURS}
+      EXECUTIONS_DATA_PRUNE_MAX_COUNT: ${N8N_EXECUTION_MAX_COUNT}
+      NODE_OPTIONS: --max-old-space-size=${N8N_NODE_HEAP_MB}
+      GENERIC_TIMEZONE: ${N8N_TIMEZONE}
+      TZ: ${N8N_TIMEZONE}
+    volumes:
+      - ${N8N_DATA_DIR}:/home/node/.n8n
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "2"
