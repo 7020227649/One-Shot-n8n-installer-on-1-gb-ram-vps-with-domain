@@ -32,14 +32,30 @@ The n8n port is bound to localhost; Nginx is the public entry point. Redis, Post
 
 ## Install
 
+The easiest method is **one command**. You do not need to edit the command or understand Bash arguments.
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/7020227649/One-Shot-n8n-installer-on-1-gb-ram-vps-with-domain/main/install.sh \
-  | sudo bash -s -- n8n.example.com admin@example.com
+curl -fsSL https://raw.githubusercontent.com/7020227649/One-Shot-n8n-installer-on-1-gb-ram-vps-with-domain/main/install.sh | sudo bash
+```
+
+The installer will ask you:
+
+```text
+Domain (example: n8n.example.com):
+Email  (example: you@example.com):
+```
+
+Enter the domain/subdomain that already points to your VPS and an email address for Let's Encrypt. The installer then performs the setup automatically.
+
+For scripts or automation, you can also provide the two values directly:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/7020227649/One-Shot-n8n-installer-on-1-gb-ram-vps-with-domain/main/install.sh | sudo bash -s -- "n8n.example.com" "you@example.com"
 ```
 
 The installer resolves the current stable n8n release from the n8n GitHub releases API and stores the selected version in `/opt/one-shot-n8n/.env`. Re-running the installer for the same domain preserves the existing version/configuration instead of silently downgrading it.
 
-> DNS must already resolve before the Let's Encrypt step. Oracle Cloud security-list/firewall rules must also allow TCP 80 and 443.
+> **Before installing:** your DNS A/AAAA record must already point to this VPS, and the VPS/cloud firewall must allow inbound TCP **80** and **443** for Let's Encrypt and HTTPS.
 
 ## 1 GB tuning
 
