@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+STACK_DIR=/opt/one-shot-n8n
+DATA_DIR=/var/lib/one-shot-n8n
+cd "$STACK_DIR"
+archive="${1:-}"
+[[ -n $archive ]] || { echo "Usage: sudo n8n-restore /var/backups/one-shot-n8n/<backup>.tar.gz" >&2; exit 2; }
+[[ -f $archive ]] || { echo "Backup not found: $archive" >&2; exit 1; }
+source .env
+snapshot=".env.before-restore-$(date -u +%Y%m%d-%H%M%S)"
+cp .env "$snapshot"
+echo "This replaces the current n8n data directory."
+read -r -p "Type RESTORE to continue: " answer
+[[ $answer == RESTORE ]] || { echo "Cancelled."; exit 0; }
+
+docker compose stop n8n
+trap 'docker compose start n8n >/dev/null 2>&1 || true' EXIT
+find "$DATA_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+tar -C "$DATA_DIR" -xzf "$archive"
+chown -R 1000:1000 "$DATA_DIR"
+docker compose start n8n
+trap - EXIT
+rm -f "$snapshot"
+echo "Restore complete. Run: sudo n8n-status"
