@@ -281,3 +281,19 @@ main() {
 
 Installation complete.
 
+Open: https://$N8N_DOMAIN
+n8n version: $N8N_VERSION
+Data: $N8N_DATA_DIR
+Backups: $BACKUP_DIR
+
+Commands:
+  sudo n8n-status
+  sudo n8n-update
+  sudo n8n-backup
+  sudo n8n-restore <backup.tar.gz>
+  sudo n8n-logs
+  sudo n8n-restart
+EOF
+}
+
+main "$@"
