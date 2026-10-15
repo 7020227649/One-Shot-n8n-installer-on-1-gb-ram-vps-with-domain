@@ -204,7 +204,6 @@ EOF_NGX
 }
 
 wait_ready() {
-  local i
   for _ in $(seq 1 100); do
     if curl -fsS --max-time 5 http://127.0.0.1:5678/healthz/readiness >/dev/null 2>&1; then return 0; fi
     sleep 3
