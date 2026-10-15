@@ -14,4 +14,4 @@ jobs:
       - name: Bash syntax
         run: bash -n install.sh scripts/*
       - name: ShellCheck
-        run: shellcheck -e SC1091,SC2015 install.sh scripts/*
+        run: shellcheck install.sh scripts/*
