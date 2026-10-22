@@ -48,8 +48,8 @@ tar -C "$DATA_DIR" -czf "$archive_tmp" .
 tar -tzf "$archive_tmp" >/dev/null || die "Backup archive verification failed."
 cp -- "$STACK_DIR/.env" "$env_tmp"
 chmod 0600 "$archive_tmp" "$env_tmp"
-mv -- "$archive_tmp" "$archive"
 mv -- "$env_tmp" "$env_file"
+mv -- "$archive_tmp" "$archive"
 
 echo "Restarting n8n..."
 docker compose -f "$STACK_DIR/compose.yaml" start n8n
