@@ -107,12 +107,11 @@ A failed update may discard changes made by the failed version between startup a
 
 Create a consistent backup:
 
-The backup command writes to a temporary file, verifies the archive, then publishes the completed archive and matching `.env` sidecar. It retains the five newest completed routine backups. Backups on the same VPS are not protection against VPS loss; copy important backups to a separate trusted location.
-
-
 ```bash
 sudo n8n-backup
 ```
+
+The backup command writes to a temporary file, verifies the archive, then publishes the completed archive and matching `.env` sidecar. It retains the five newest completed routine backups. Backups on the same VPS are not protection against VPS loss; copy important backups to a separate trusted location.
 
 Restore a backup:
 
