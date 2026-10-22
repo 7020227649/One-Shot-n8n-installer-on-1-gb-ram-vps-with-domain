@@ -28,9 +28,38 @@ source "$ENV_FILE"
 [[ -n ${N8N_VERSION:-} && -n ${N8N_DOMAIN:-} ]] || die "Current .env is missing required values."
 [[ $backup_domain == "$N8N_DOMAIN" ]] || die "Backup domain ($backup_domain) does not match this installation ($N8N_DOMAIN)."
 
-# Validate the archive before stopping the running service.
-archive_listing="$(tar -tzf "$archive")" || die "Backup archive is corrupt or unreadable."
-grep -Fq 'database.sqlite' <<< "$archive_listing" || die "Backup does not contain database.sqlite; refusing restore."
+# Validate every archive member before stopping n8n or extracting anything.
+# Reject traversal paths, links, special files, duplicate normalized paths, and
+# archives without a regular SQLite database at the data-directory root.
+python3 - "$archive" <<'PY_VALIDATE' || die "Backup archive failed safety validation; refusing restore."
+import pathlib
+import sys
+import tarfile
+
+archive = sys.argv[1]
+seen = set()
+database_found = False
+with tarfile.open(archive, "r:gz") as tf:
+    for member in tf.getmembers():
+        name = member.name
+        path = pathlib.PurePosixPath(name)
+        if path.is_absolute() or ".." in path.parts:
+            raise SystemExit(f"Unsafe archive path: {name!r}")
+        normalized = str(pathlib.PurePosixPath(*[part for part in path.parts if part not in ("", ".")]))
+        if normalized in ("", "."):
+            if not member.isdir():
+                raise SystemExit(f"Unexpected root member type: {name!r}")
+            continue
+        if normalized in seen:
+            raise SystemExit(f"Duplicate archive path: {normalized!r}")
+        seen.add(normalized)
+        if not (member.isfile() or member.isdir()):
+            raise SystemExit(f"Links and special files are not allowed: {name!r}")
+        if normalized == "database.sqlite" and member.isfile():
+            database_found = True
+if not database_found:
+    raise SystemExit("Archive must contain a regular database.sqlite at its root")
+PY_VALIDATE
 
 mkdir -p "$BACKUP_DIR"
 stamp="$(date -u +%Y%m%d-%H%M%S)"
