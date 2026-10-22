@@ -84,7 +84,7 @@ on_exit() {
         if mv -- "$DATA_DIR" "$old_data" && mv -- "$rollback_stage" "$DATA_DIR"; then
           rollback_stage=""
           chown -R 1000:1000 "$DATA_DIR"
-          if sed -i -E "s/^N8N_VERSION=.*/N8N_VERSION=$old_version/" "$ENV_FILE" &&
+          if cp -- "$backup_env" "$ENV_FILE" &&
              docker compose -f "$COMPOSE_FILE" up -d --force-recreate n8n >/dev/null &&
              wait_ready 60; then
             echo "Rollback succeeded: n8n $old_version is ready." >&2
@@ -95,11 +95,18 @@ on_exit() {
             rc=1
           fi
         else
-          echo "CRITICAL: Could not switch back to the pre-update data. Preserve $backup and inspect $DATA_DIR, $old_data, and $rollback_stage." >&2
+          if [[ ! -e "$DATA_DIR" && -d "$old_data" ]]; then
+            mv -- "$old_data" "$DATA_DIR"
+          fi
+          cp -- "$backup_env" "$ENV_FILE" 2>/dev/null
+          echo "CRITICAL: Could not switch back to the pre-update data. A best-effort restart will be attempted; preserve $backup and inspect $DATA_DIR, $old_data, and $rollback_stage." >&2
+          docker compose -f "$COMPOSE_FILE" up -d n8n >/dev/null 2>&1
           rc=1
         fi
       else
-        echo "CRITICAL: Could not extract the verified pre-update backup. Preserve $backup and inspect the host." >&2
+        cp -- "$backup_env" "$ENV_FILE" 2>/dev/null
+        echo "CRITICAL: Could not extract the verified pre-update backup. A best-effort restart will be attempted; preserve $backup and inspect the host." >&2
+        docker compose -f "$COMPOSE_FILE" up -d n8n >/dev/null 2>&1
         rc=1
       fi
     else
