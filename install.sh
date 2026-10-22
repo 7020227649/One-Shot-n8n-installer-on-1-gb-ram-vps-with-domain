@@ -57,17 +57,32 @@ validate_args() {
   [[ $EMAIL =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || die "Invalid email: $EMAIL"
 }
 
+port_listeners_are_only_nginx() {
+  local port="$1" listeners line
+  listeners="$(ss -H -ltnp "( sport = :${port} )")" || return 1
+  [[ -n $listeners ]] || return 1
+  while IFS= read -r line; do
+    # With root privileges ss reports owning processes. Reject unknown owners
+    # rather than assuming an active Nginx means every listener belongs to it.
+    [[ $line == *'users:(("nginx"'* ]] || return 1
+  done <<< "$listeners"
+}
+
 check_ports() {
   apt-get update -y >/dev/null
   apt-get install -y iproute2 >/dev/null
   for port in 80 443; do
-    if ss -ltn "( sport = :${port} )" | tail -n +2 | grep -q .; then
-      # Permit a rerun only when this install's Nginx config is already active.
-      # An unrelated service on these ports still causes a safe refusal.
-      if [[ -f "$NGINX_CONF" ]] && systemctl is-active --quiet nginx; then
-        log "TCP port ${port} is already served by this installation's active Nginx; allowing rerun."
+    if ss -H -ltn "( sport = :${port} )" | grep -q .; then
+      # A rerun is safe only if this install's config is valid and every
+      # listener on the occupied port is owned by Nginx.
+      if [[ -f "$NGINX_CONF" ]] &&
+         systemctl is-active --quiet nginx &&
+         nginx -t >/dev/null 2>&1 &&
+         grep -Fq "server_name $DOMAIN;" "$NGINX_CONF" &&
+         port_listeners_are_only_nginx "$port"; then
+        log "TCP port ${port} is already served by this installation's Nginx; allowing rerun."
       else
-        die "TCP port ${port} is already in use. Stop the unrelated service or use a fresh VPS."
+        die "TCP port ${port} is already in use by an unverified service. Stop it or inspect the existing Nginx configuration before rerunning."
       fi
     fi
   done
