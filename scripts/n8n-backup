@@ -5,6 +5,7 @@ DATA_DIR=/var/lib/one-shot-n8n
 BACKUP_DIR=/var/backups/one-shot-n8n
 mkdir -p "$BACKUP_DIR"
 cd "$STACK_DIR"
+# shellcheck disable=SC1091
 source .env
 stamp="$(date -u +%Y%m%d-%H%M%S)"
 archive="$BACKUP_DIR/n8n-${N8N_VERSION}-${stamp}.tar.gz"
