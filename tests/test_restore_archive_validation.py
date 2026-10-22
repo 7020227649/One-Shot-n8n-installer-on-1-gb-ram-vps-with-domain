@@ -69,6 +69,8 @@ with tempfile.TemporaryDirectory() as directory:
     check("special-file", [("database.sqlite", "file", b"sqlite"), ("pipe", "fifo", b"")], False)
     check("database-as-directory", [("database.sqlite", "dir", b"")], False)
     check("duplicate-path", [("database.sqlite", "file", b"one"), ("./database.sqlite", "file", b"two")], False)
+    check("file-parent-conflict", [("database.sqlite", "file", b"sqlite"), ("node", "file", b"x"), ("node/child", "file", b"y")], False)
+    check("file-child-conflict", [("database.sqlite", "file", b"sqlite"), ("node/child", "file", b"y"), ("node", "file", b"x")], False)
     broken = temp / "truncated.tar.gz"
     broken.write_bytes(b"not a tar archive")
     result = subprocess.run([sys.executable, "-c", validator, str(broken)], text=True, capture_output=True)
