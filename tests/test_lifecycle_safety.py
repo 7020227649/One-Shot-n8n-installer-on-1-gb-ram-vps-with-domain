@@ -65,6 +65,54 @@ require(
     'mv -f -- "$tmp" "$COMPOSE_FILE"',
     'swap_path=/swapfile.one-shot-n8n',
     'Refusing to overwrite an unknown file',
+    'port_listeners_are_only_nginx "$port"',
+    'grep -Fq "server_name $DOMAIN;" "$NGINX_CONF"',
 )
 forbid("install.sh", "rm -f /swapfile")
+
+# Exercise the actual listener-owner predicate with representative ss output.
+# This catches active Nginx masking an unrelated service on the other port.
+import os
+import subprocess
+import tempfile
+
+
+def test_port_listener_ownership():
+    installer = read("install.sh")
+    start = installer.index("port_listeners_are_only_nginx() {")
+    end = installer.index("\ncheck_ports() {", start)
+    function = installer[start:end]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        stub = Path(temp_dir) / "ss"
+        stub.write_text('#!/usr/bin/env bash\nprintf "%s\n" "$SS_OUTPUT"\n')
+        stub.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = f"{temp_dir}:{env['PATH']}"
+
+        cases = [
+            ('LISTEN 0 511 0.0.0.0:443 0.0.0.0:* users:(("nginx",pid=12,fd=6))', True),
+            ('LISTEN 0 511 0.0.0.0:443 0.0.0.0:* users:(("nginx",pid=12,fd=6))\nLISTEN 0 128 0.0.0.0:443 0.0.0.0:* users:(("other",pid=99,fd=3))', False),
+            ('LISTEN 0 128 0.0.0.0:443 0.0.0.0:* users:(("other",pid=99,fd=3))', False),
+            ('', False),
+        ]
+        for output, expected in cases:
+            env["SS_OUTPUT"] = output
+            result = subprocess.run(
+                ["bash", "-c", function + "\nport_listeners_are_only_nginx 443"],
+                env=env,
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            actual = result.returncode == 0
+            if actual != expected:
+                raise AssertionError(
+                    f"listener ownership mismatch for {output!r}: expected {expected}, got {actual}"
+                )
+    print("PASS install.sh: listener-owner predicate accepts only verified Nginx listeners")
+
+
+test_port_listener_ownership()
+
 print("All lifecycle safety guards passed.")
