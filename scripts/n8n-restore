@@ -32,15 +32,27 @@ source "$ENV_FILE"
 # Reject traversal paths, links, special files, duplicate normalized paths, and
 # archives without a regular SQLite database at the data-directory root.
 python3 - "$archive" <<'PY_VALIDATE' || die "Backup archive failed safety validation; refusing restore."
+import os
 import pathlib
 import sys
 import tarfile
 
 archive = sys.argv[1]
+MAX_ARCHIVE_BYTES = 5 * 1024**3
+MAX_UNPACKED_BYTES = 5 * 1024**3
+MAX_MEMBER_BYTES = 2 * 1024**3
+MAX_MEMBERS = 100_000
+if os.path.getsize(archive) > MAX_ARCHIVE_BYTES:
+    raise SystemExit("Compressed archive exceeds the 5 GiB safety limit")
 seen = set()
 database_found = False
+member_count = 0
+total_size = 0
 with tarfile.open(archive, "r:gz") as tf:
-    for member in tf.getmembers():
+    for member in tf:
+        member_count += 1
+        if member_count > MAX_MEMBERS:
+            raise SystemExit("Archive contains too many members")
         name = member.name
         path = pathlib.PurePosixPath(name)
         if path.is_absolute() or ".." in path.parts:
@@ -55,6 +67,12 @@ with tarfile.open(archive, "r:gz") as tf:
         seen.add(normalized)
         if not (member.isfile() or member.isdir()):
             raise SystemExit(f"Links and special files are not allowed: {name!r}")
+        if member.isfile():
+            if member.size < 0 or member.size > MAX_MEMBER_BYTES:
+                raise SystemExit(f"Archive member exceeds the 2 GiB limit: {name!r}")
+            total_size += member.size
+            if total_size > MAX_UNPACKED_BYTES:
+                raise SystemExit("Archive exceeds the 5 GiB unpacked-size limit")
         if normalized == "database.sqlite" and member.isfile():
             database_found = True
 if not database_found:
@@ -102,6 +120,7 @@ docker compose -f "$COMPOSE_FILE" stop n8n
 tar -C "$DATA_DIR" -czf "$safety_backup" .
 cp -- "$ENV_FILE" "$safety_env"
 chmod 600 "$safety_backup" "$safety_env"
+tar -tzf "$safety_backup" >/dev/null || die "Safety backup verification failed; restore aborted."
 
 echo "Validating and staging the selected backup..."
 stage="$(mktemp -d "${DATA_DIR}.restore.XXXXXX")"
