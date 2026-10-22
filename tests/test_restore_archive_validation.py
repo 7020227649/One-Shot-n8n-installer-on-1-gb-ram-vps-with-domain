@@ -34,6 +34,13 @@ def make_archive(path, entries):
                 info.type = tarfile.SYMTYPE
                 info.linkname = data
                 tf.addfile(info)
+            elif kind == "hardlink":
+                info.type = tarfile.LNKTYPE
+                info.linkname = data
+                tf.addfile(info)
+            elif kind == "fifo":
+                info.type = tarfile.FIFOTYPE
+                tf.addfile(info)
 
 def check(label, entries, expected_ok):
     archive = temp / (label + ".tar.gz")
@@ -58,4 +65,13 @@ with tempfile.TemporaryDirectory() as directory:
     check("path-traversal", [("./database.sqlite", "file", b"sqlite"), ("../escape", "file", b"bad")], False)
     check("absolute-path", [("/tmp/escape", "file", b"bad"), ("database.sqlite", "file", b"sqlite")], False)
     check("symbolic-link", [("database.sqlite", "file", b"sqlite"), ("link", "symlink", "database.sqlite")], False)
+    check("hard-link", [("database.sqlite", "file", b"sqlite"), ("link", "hardlink", "database.sqlite")], False)
+    check("special-file", [("database.sqlite", "file", b"sqlite"), ("pipe", "fifo", b"")], False)
+    check("database-as-directory", [("database.sqlite", "dir", b"")], False)
     check("duplicate-path", [("database.sqlite", "file", b"one"), ("./database.sqlite", "file", b"two")], False)
+    broken = temp / "truncated.tar.gz"
+    broken.write_bytes(b"not a tar archive")
+    result = subprocess.run([sys.executable, "-c", validator, str(broken)], text=True, capture_output=True)
+    if result.returncode == 0:
+        raise AssertionError("truncated archive was unexpectedly accepted")
+    print("PASS truncated-archive")
