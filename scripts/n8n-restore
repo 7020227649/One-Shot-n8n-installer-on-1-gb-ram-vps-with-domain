@@ -151,8 +151,8 @@ tar -C "$DATA_DIR" -czf "$safety_backup_tmp" .
 tar -tzf "$safety_backup_tmp" >/dev/null || die "Safety backup verification failed; restore aborted."
 cp -- "$ENV_FILE" "$safety_env_tmp"
 chmod 600 "$safety_backup_tmp" "$safety_env_tmp"
-mv -- "$safety_backup_tmp" "$safety_backup"
 mv -- "$safety_env_tmp" "$safety_env"
+mv -- "$safety_backup_tmp" "$safety_backup"
 
 echo "Validating and staging the selected backup..."
 stage="$(mktemp -d "${DATA_DIR}.restore.XXXXXX")"
