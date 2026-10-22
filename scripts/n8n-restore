@@ -44,7 +44,9 @@ MAX_MEMBER_BYTES = 2 * 1024**3
 MAX_MEMBERS = 100_000
 if os.path.getsize(archive) > MAX_ARCHIVE_BYTES:
     raise SystemExit("Compressed archive exceeds the 5 GiB safety limit")
-seen = set()
+seen = {}
+non_directories = set()
+has_descendants = set()
 database_found = False
 member_count = 0
 total_size = 0
@@ -64,10 +66,19 @@ with tarfile.open(archive, "r:gz") as tf:
             continue
         if normalized in seen:
             raise SystemExit(f"Duplicate archive path: {normalized!r}")
-        seen.add(normalized)
+        parts = pathlib.PurePosixPath(normalized).parts
+        for index in range(1, len(parts)):
+            parent = str(pathlib.PurePosixPath(*parts[:index]))
+            if parent in non_directories:
+                raise SystemExit(f"Archive path is nested under a non-directory: {parent!r}")
+            has_descendants.add(parent)
         if not (member.isfile() or member.isdir()):
             raise SystemExit(f"Links and special files are not allowed: {name!r}")
+        if member.isfile() and normalized in has_descendants:
+            raise SystemExit(f"Archive file conflicts with an existing child path: {normalized!r}")
+        seen[normalized] = "dir" if member.isdir() else "file"
         if member.isfile():
+            non_directories.add(normalized)
             if member.size < 0 or member.size > MAX_MEMBER_BYTES:
                 raise SystemExit(f"Archive member exceeds the 2 GiB limit: {name!r}")
             total_size += member.size
