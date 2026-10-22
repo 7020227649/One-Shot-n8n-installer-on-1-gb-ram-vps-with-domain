@@ -117,7 +117,7 @@ Restore a backup:
 sudo n8n-restore /var/backups/one-shot-n8n/<backup>.tar.gz
 ```
 
-The restore command requires typing `RESTORE` because it replaces the current n8n data directory.
+The restore command requires typing `RESTORE` because it replaces the current n8n data directory. It validates the archive and matching `.env` metadata, checks that the backup domain matches the current installation, creates a safety backup of the current data/configuration, restores the n8n version recorded with the backup, and waits for readiness. If the restored instance fails readiness, it attempts to put the previous data and configuration back. Keep backup `.env` sidecar files alongside their `.tar.gz` archives.
 
 ## Useful commands
 
