@@ -55,6 +55,8 @@ curl -fsSL https://raw.githubusercontent.com/7020227649/One-Shot-n8n-installer-o
 
 The installer resolves the current stable n8n release from the n8n GitHub releases API and stores the selected version in `/opt/one-shot-n8n/.env`. Re-running the installer for the same domain preserves the existing version/configuration instead of silently downgrading it. If this install's own Nginx service is already active, the installer allows that rerun; unrelated services occupying ports 80/443 still cause a safe refusal.
 
+
+**If SSH disconnects during installation:** reconnect and run the same one-command installer again. When `/opt/one-shot-n8n/.env` has already been created, the installer automatically reuses its saved domain and email and continues the remaining setup steps instead of asking you to enter them again. It preserves the existing n8n version/configuration for the same domain.
 > **Before installing:** your DNS A/AAAA record must already point to this VPS, and the VPS/cloud firewall must allow inbound TCP **80** and **443** for Let's Encrypt and HTTPS.
 
 ## 1 GB tuning
