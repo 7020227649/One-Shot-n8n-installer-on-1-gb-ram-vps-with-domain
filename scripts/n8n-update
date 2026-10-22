@@ -143,8 +143,9 @@ echo "Pulling n8n $target image before downtime..."
 N8N_VERSION="$target" docker compose -f "$COMPOSE_FILE" pull n8n >/dev/null
 
 echo "Stopping n8n for a consistent SQLite backup..."
-docker compose -f "$COMPOSE_FILE" stop n8n
+# Arm recovery before stopping: a failed stop can still leave the service stopped.
 restore_old=1
+docker compose -f "$COMPOSE_FILE" stop n8n
 
 echo "Creating and verifying pre-update backup..."
 tar -C "$DATA_DIR" -czf "$backup_tmp" .
