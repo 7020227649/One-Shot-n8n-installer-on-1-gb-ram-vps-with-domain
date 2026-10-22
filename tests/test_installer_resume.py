@@ -25,7 +25,7 @@ def run_validate(env_file, args=()):
             "prompt_for_details() { echo 'unexpected interactive prompt' >&2; exit 91; }",
             function,
             "validate_args " + " ".join(shlex.quote(arg) for arg in args),
-            'printf "DOMAIN=%s\\nEMAIL=%s\\n" "$DOMAIN" "$EMAIL"',
+            'printf "DOMAIN=%s\nEMAIL=%s\n" "$DOMAIN" "$EMAIL"',
         ]
     )
     return subprocess.run(["bash", "-c", script], text=True, capture_output=True, check=False)
@@ -35,9 +35,9 @@ def main():
     with tempfile.TemporaryDirectory() as temporary:
         env_file = Path(temporary) / ".env"
         env_file.write_text(
-            "N8N_VERSION=2.44.5\\n"
-            "N8N_DOMAIN=n8n.example.com\\n"
-            "N8N_EMAIL=setup@example.com\\n"
+            "N8N_VERSION=2.44.5\n"
+            "N8N_DOMAIN=n8n.example.com\n"
+            "N8N_EMAIL=setup@example.com\n"
         )
 
         resumed = run_validate(env_file)
