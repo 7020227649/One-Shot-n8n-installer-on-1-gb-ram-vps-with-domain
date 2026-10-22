@@ -13,6 +13,7 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 command -v docker >/dev/null 2>&1 || die "Docker is not installed."
 cd "$STACK_DIR"
 # shellcheck disable=SC1091
+# shellcheck disable=SC1090
 source "$ENV_FILE"
 
 latest_stable() {
@@ -46,7 +47,8 @@ fi
 
 old_version="$N8N_VERSION"
 stamp="$(date -u +%Y%m%d-%H%M%S)"
-mkdir -p -m 0700 "$BACKUP_DIR"
+mkdir -p "$BACKUP_DIR"
+chmod 0700 "$BACKUP_DIR"
 backup="$BACKUP_DIR/pre-update-${old_version}-${stamp}.tar.gz"
 backup_tmp="${backup}.partial.$$"
 backup_env="${backup%.tar.gz}.env"
