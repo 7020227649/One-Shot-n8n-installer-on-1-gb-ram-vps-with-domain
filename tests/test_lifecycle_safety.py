@@ -32,6 +32,7 @@ require(
     'chmod 0600 "$archive_tmp" "$env_tmp"',
     'stamp="$(date -u +%Y%m%d-%H%M%S)-${BASHPID}"',
     'if [[ $started == 1 ]]',
+    'started=1\ndocker compose -f "$STACK_DIR/compose.yaml" stop n8n',
     'mv -- "$env_tmp" "$env_file"\nmv -- "$archive_tmp" "$archive"',
 )
 require(
@@ -39,6 +40,7 @@ require(
     'tar -tzf "$backup_tmp" >/dev/null',
     'cp -- "$backup_env" "$ENV_FILE"',
     'wait_ready 60',
+    'restore_old=1\ndocker compose -f "$COMPOSE_FILE" stop n8n',
     'tar -tzf "$failed_state" >/dev/null 2>&1',
     'stamp="$(date -u +%Y%m%d-%H%M%S)-${BASHPID}"',
     'mv -- "$backup_env_tmp" "$backup_env"\nmv -- "$backup_tmp" "$backup"',
