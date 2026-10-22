@@ -173,7 +173,7 @@ releases = json.load(sys.stdin)
 # releases. Select the first non-draft, non-prerelease semver release tag only.
 for r in releases:
     tag = r.get("tag_name", "")
-    match = re.fullmatch(r"(?:n8n@)?v?(\\d+\\.\\d+\\.\\d+)", tag)
+    match = re.fullmatch(r"(?:n8n@)?v?(\d+\.\d+\.\d+)", tag)
     if not r.get("draft") and not r.get("prerelease") and match:
         print(match.group(1))
         break
