@@ -79,8 +79,13 @@ on_exit() {
     if (( backup_ready == 1 )); then
       echo "Update did not complete; attempting data-and-version rollback..." >&2
       docker compose -f "$COMPOSE_FILE" stop n8n >/dev/null 2>&1
-      tar -C "$DATA_DIR" -czf "$failed_state" . 2>/dev/null
-      if [[ -f "$failed_state" ]]; then chmod 0600 "$failed_state"; fi
+      if tar -C "$DATA_DIR" -czf "$failed_state" . 2>/dev/null &&
+         tar -tzf "$failed_state" >/dev/null 2>&1; then
+        chmod 0600 "$failed_state"
+      else
+        rm -f -- "$failed_state"
+        echo "WARNING: Could not verify a failed-state snapshot; preserving the failed data directory during rollback." >&2
+      fi
       rollback_stage="$(mktemp -d "${DATA_DIR}.rollback.XXXXXX")"
       if tar -C "$rollback_stage" -xzf "$backup"; then
         if mv -- "$DATA_DIR" "$old_data" && mv -- "$rollback_stage" "$DATA_DIR"; then
@@ -91,7 +96,12 @@ on_exit() {
              wait_ready 60; then
             echo "Rollback succeeded: n8n $old_version is ready." >&2
             echo "Pre-update backup: $backup" >&2
-            [[ ! -f "$failed_state" ]] || echo "Failed-state snapshot: $failed_state" >&2
+            if [[ -f "$failed_state" ]]; then
+              echo "Verified failed-state snapshot: $failed_state" >&2
+              rm -rf -- "$old_data"
+            else
+              echo "Failed-state snapshot unavailable; preserving the old data directory at $old_data." >&2
+            fi
           else
             echo "CRITICAL: Rollback was attempted but readiness was not confirmed. Preserve $backup and $old_data; inspect Docker logs before further changes." >&2
             rc=1
