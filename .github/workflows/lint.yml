@@ -15,3 +15,5 @@ jobs:
         run: bash -n install.sh scripts/*
       - name: ShellCheck
         run: shellcheck install.sh scripts/*
+      - name: Restore archive validation tests
+        run: python3 tests/test_restore_archive_validation.py
