@@ -62,7 +62,13 @@ check_ports() {
   apt-get install -y iproute2 >/dev/null
   for port in 80 443; do
     if ss -ltn "( sport = :${port} )" | tail -n +2 | grep -q .; then
-      die "TCP port ${port} is already in use. This installer expects a fresh VPS."
+      # Permit a rerun only when this install's Nginx config is already active.
+      # An unrelated service on these ports still causes a safe refusal.
+      if [[ -f "$NGINX_CONF" ]] && systemctl is-active --quiet nginx; then
+        log "TCP port ${port} is already served by this installation's active Nginx; allowing rerun."
+      else
+        die "TCP port ${port} is already in use. Stop the unrelated service or use a fresh VPS."
+      fi
     fi
   done
 }
