@@ -19,7 +19,7 @@ source .env
 [[ ${N8N_VERSION:-} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "Invalid N8N_VERSION in .env."
 [[ -n ${N8N_DOMAIN:-} ]] || die "N8N_DOMAIN is missing from .env."
 
-stamp="$(date -u +%Y%m%d-%H%M%S)-$"
+stamp="$(date -u +%Y%m%d-%H%M%S)-${BASHPID}"
 archive="$BACKUP_DIR/n8n-${N8N_VERSION}-${stamp}.tar.gz"
 archive_tmp="${archive}.partial.$$"
 env_file="${archive%.tar.gz}.env"
