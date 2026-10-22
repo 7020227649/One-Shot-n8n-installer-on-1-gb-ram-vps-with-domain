@@ -68,25 +68,35 @@ check_ports() {
 }
 
 configure_swap() {
-  local swap_mb
+  local swap_mb swap_path
   swap_mb="$(free -m | awk '/^Swap:/ {print $2}')"
+  swap_path=/swapfile
   if (( swap_mb < 1024 )); then
     if [[ -e /swapfile ]]; then
       if swapon --show=NAME --noheadings | grep -Fxq /swapfile; then
-        log "Existing /swapfile is active (${swap_mb} MB total swap); preserving it rather than replacing a live swap device."
+        # Preserve a live existing swapfile; add a separate one rather than replacing it.
+        swap_path=/swapfile.one-shot-n8n
       else
         die "/swapfile already exists but is not active swap. Refusing to overwrite an unknown file; inspect it and rerun."
       fi
-    else
-      log "Creating ${SWAP_SIZE_GB} GB swap safety net..."
-      if ! fallocate -l "${SWAP_SIZE_GB}G" /swapfile 2>/dev/null; then
-        rm -f /swapfile
-        dd if=/dev/zero of=/swapfile bs=1M count=$((SWAP_SIZE_GB*1024)) status=progress
+    fi
+
+    if [[ -e "$swap_path" ]]; then
+      if swapon --show=NAME --noheadings | grep -Fxq "$swap_path"; then
+        log "Existing $swap_path is already active; preserving it."
+      else
+        die "$swap_path already exists but is not active swap. Refusing to overwrite an unknown file; inspect it and rerun."
       fi
-      chmod 600 /swapfile
-      mkswap /swapfile >/dev/null
-      swapon /swapfile
-      grep -qE '^/swapfile[[:space:]]' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    else
+      log "Creating ${SWAP_SIZE_GB} GB swap safety net at $swap_path..."
+      if ! fallocate -l "${SWAP_SIZE_GB}G" "$swap_path" 2>/dev/null; then
+        rm -f -- "$swap_path"
+        dd if=/dev/zero of="$swap_path" bs=1M count=$((SWAP_SIZE_GB*1024)) status=progress
+      fi
+      chmod 600 "$swap_path"
+      mkswap "$swap_path" >/dev/null
+      swapon "$swap_path"
+      grep -qF "$swap_path none swap sw 0 0" /etc/fstab || echo "$swap_path none swap sw 0 0" >> /etc/fstab
     fi
   else
     log "Existing swap: ${swap_mb} MB; keeping it."
