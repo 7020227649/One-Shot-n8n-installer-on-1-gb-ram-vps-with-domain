@@ -53,7 +53,7 @@ For scripts or automation, you can also provide the two values directly:
 curl -fsSL https://raw.githubusercontent.com/7020227649/One-Shot-n8n-installer-on-1-gb-ram-vps-with-domain/main/install.sh | sudo bash -s -- "n8n.example.com" "you@example.com"
 ```
 
-The installer resolves the current stable n8n release from the n8n GitHub releases API and stores the selected version in `/opt/one-shot-n8n/.env`. Re-running the installer for the same domain preserves the existing version/configuration instead of silently downgrading it.
+The installer resolves the current stable n8n release from the n8n GitHub releases API and stores the selected version in `/opt/one-shot-n8n/.env`. Re-running the installer for the same domain preserves the existing version/configuration instead of silently downgrading it. If this install's own Nginx service is already active, the installer allows that rerun; unrelated services occupying ports 80/443 still cause a safe refusal.
 
 > **Before installing:** your DNS A/AAAA record must already point to this VPS, and the VPS/cloud firewall must allow inbound TCP **80** and **443** for Let's Encrypt and HTTPS.
 
@@ -95,10 +95,10 @@ The updater:
 1. Resolves/validates the target version.
 2. Pulls the new Docker image **before stopping the current n8n**, minimizing downtime.
 3. Stops n8n for a consistent SQLite backup.
-4. Saves the current data and `.env` to `/var/backups/one-shot-n8n/`.
+4. Saves the current data and `.env` to `/var/backups/one-shot-n8n/`, then verifies the archive can be read before changing versions.
 5. Recreates the n8n container with the target version.
 6. Waits for `/healthz/readiness`, including database migrations.
-7. On failed readiness, captures the failed state and automatically restores the pre-update backup and old version.
+7. If the update fails after the verified backup exists, attempts to restore the prior data and exact prior `.env`, then checks readiness. Failed-state snapshots are retained for diagnosis.
 8. Removes the previous Docker image after a successful update to avoid filling a small VPS disk.
 
 A failed update may discard changes made by the failed version between startup and rollback; the failed-state archive is retained for investigation.
@@ -111,13 +111,15 @@ Create a consistent backup:
 sudo n8n-backup
 ```
 
+The backup command writes to a temporary file, verifies the archive, then publishes the completed archive and matching `.env` sidecar. It retains the five newest completed routine backups. Backups on the same VPS are not protection against VPS loss; copy important backups to a separate trusted location.
+
 Restore a backup:
 
 ```bash
 sudo n8n-restore /var/backups/one-shot-n8n/<backup>.tar.gz
 ```
 
-The restore command requires typing `RESTORE` because it replaces the current n8n data directory.
+The restore command requires typing `RESTORE` because it replaces the current n8n data directory. It validates the archive and matching `.env` metadata, checks that the backup domain matches the current installation, creates a safety backup of the current data/configuration, restores the n8n version recorded with the backup, and waits for readiness. If the restored instance fails readiness, it attempts to put the previous data and configuration back. Keep backup `.env` sidecar files alongside their `.tar.gz` archives.
 
 ## Useful commands
 
@@ -158,8 +160,24 @@ sudo n8n-uninstall
 
 This project intentionally targets the smallest practical n8n deployment. It does not promise that every n8n workflow will fit in 1 GB RAM. For sustained high concurrency, large data processing, or production-critical workloads, use a larger VPS and consider PostgreSQL/queue-based architecture.
 
-The installer currently targets Ubuntu 22.04 only. It is designed for a **fresh** server and deliberately stops when ports 80/443 are already occupied.
+The installer currently targets Ubuntu 22.04 only. It is designed for a **fresh** server and deliberately stops when ports 80/443 are already occupied. It will not overwrite an existing inactive `/swapfile`; inspect that file rather than letting the installer replace unknown data. Downloaded stack/helper files are replaced atomically so a failed download does not leave a truncated script.
 
 ## License
 
 See [LICENSE](LICENSE).
+
+
+## Development checks
+
+The GitHub Actions workflow runs on Ubuntu 22.04, the installer's supported release. It checks Bash syntax, ShellCheck, restore archive validation (including malicious archive paths and file types), and lifecycle safety guard tests for backup publication, update rollback, restore limits, and swap-file protection.
+
+Run the same checks locally from the repository root:
+
+```bash
+bash -n install.sh scripts/*
+shellcheck install.sh scripts/*
+python3 tests/test_restore_archive_validation.py
+python3 tests/test_lifecycle_safety.py
+```
+
+These checks are regression safeguards, not a substitute for full fresh-VM installation and failure-injection testing.

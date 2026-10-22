@@ -1,29 +1,65 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+
 STACK_DIR=/opt/one-shot-n8n
 DATA_DIR=/var/lib/one-shot-n8n
 BACKUP_DIR=/var/backups/one-shot-n8n
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+[[ $EUID -eq 0 ]] || die "Run with sudo."
+[[ -d "$DATA_DIR" && -f "$STACK_DIR/compose.yaml" && -f "$STACK_DIR/.env" ]] || die "n8n installation or data directory is missing."
+command -v docker >/dev/null 2>&1 || die "Docker is not installed."
+command -v tar >/dev/null 2>&1 || die "tar is not installed."
+
 mkdir -p "$BACKUP_DIR"
+chmod 0700 "$BACKUP_DIR"
 cd "$STACK_DIR"
+# shellcheck disable=SC1091
 source .env
-stamp="$(date -u +%Y%m%d-%H%M%S)"
+[[ ${N8N_VERSION:-} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "Invalid N8N_VERSION in .env."
+[[ -n ${N8N_DOMAIN:-} ]] || die "N8N_DOMAIN is missing from .env."
+
+stamp="$(date -u +%Y%m%d-%H%M%S)-${BASHPID}"
 archive="$BACKUP_DIR/n8n-${N8N_VERSION}-${stamp}.tar.gz"
+archive_tmp="${archive}.partial.$$"
+env_file="${archive%.tar.gz}.env"
+env_tmp="${env_file}.partial.$$"
+started=0
+cleanup() {
+  rc=$?
+  trap - EXIT
+  rm -f -- "$archive_tmp" "$env_tmp"
+  if [[ $started == 1 ]]; then
+    if ! docker compose -f "$STACK_DIR/compose.yaml" start n8n >/dev/null; then
+      echo "CRITICAL: Backup finished/failed but n8n could not be restarted. Run: sudo n8n-status" >&2
+      rc=1
+    fi
+  fi
+  exit "$rc"
+}
+trap cleanup EXIT
 
 echo "Stopping n8n for a consistent SQLite backup..."
-docker compose stop n8n
+# Arm cleanup before stopping: a failed stop can still leave the service stopped.
 started=1
-trap 'if [[ $started == 1 ]]; then docker compose start n8n >/dev/null 2>&1 || true; fi' EXIT
+docker compose -f "$STACK_DIR/compose.yaml" stop n8n
 
-tar -C "$DATA_DIR" -czf "$archive" .
-cp .env "${archive%.tar.gz}.env"
-chmod 600 "$archive" "${archive%.tar.gz}.env"
+echo "Writing temporary backup..."
+tar -C "$DATA_DIR" -czf "$archive_tmp" .
+tar -tzf "$archive_tmp" >/dev/null || die "Backup archive verification failed."
+cp -- "$STACK_DIR/.env" "$env_tmp"
+chmod 0600 "$archive_tmp" "$env_tmp"
+mv -- "$env_tmp" "$env_file"
+mv -- "$archive_tmp" "$archive"
 
-docker compose start n8n
+echo "Restarting n8n..."
+docker compose -f "$STACK_DIR/compose.yaml" start n8n
 started=0
 
-mapfile -t backups < <(ls -1t "$BACKUP_DIR"/*.tar.gz 2>/dev/null || true)
+# Retain the five newest completed archives and their matching metadata.
+mapfile -t backups < <(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'n8n-*.tar.gz' -printf '%T@ %p\n' | sort -nr | cut -d' ' -f2-)
 for ((i=5; i<${#backups[@]}; i++)); do
-  rm -f "${backups[$i]}" "${backups[$i]%.tar.gz}.env"
+  rm -f -- "${backups[$i]}" "${backups[$i]%.tar.gz}.env"
 done
 
-printf 'Backup created: %s\n' "$archive"
+printf 'Backup created and verified: %s\n' "$archive"

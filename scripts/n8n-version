@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 cd /opt/one-shot-n8n
+# shellcheck disable=SC1091
 source .env
 printf 'n8n version: %s\n' "$N8N_VERSION"
 printf 'Domain:      %s\n' "$N8N_DOMAIN"

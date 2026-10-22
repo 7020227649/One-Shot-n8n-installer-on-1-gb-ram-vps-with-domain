@@ -1,24 +1,186 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+
 STACK_DIR=/opt/one-shot-n8n
 DATA_DIR=/var/lib/one-shot-n8n
-cd "$STACK_DIR"
+BACKUP_DIR=/var/backups/one-shot-n8n
+COMPOSE_FILE="$STACK_DIR/compose.yaml"
+ENV_FILE="$STACK_DIR/.env"
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+[[ $EUID -eq 0 ]] || die "Run with sudo."
 archive="${1:-}"
-[[ -n $archive ]] || { echo "Usage: sudo n8n-restore /var/backups/one-shot-n8n/<backup>.tar.gz" >&2; exit 2; }
-[[ -f $archive ]] || { echo "Backup not found: $archive" >&2; exit 1; }
-source .env
-snapshot=".env.before-restore-$(date -u +%Y%m%d-%H%M%S)"
-cp .env "$snapshot"
-echo "This replaces the current n8n data directory."
+[[ -n $archive ]] || die "Usage: sudo n8n-restore /var/backups/one-shot-n8n/<backup>.tar.gz"
+[[ -f $archive ]] || die "Backup not found: $archive"
+[[ -f $ENV_FILE && -f $COMPOSE_FILE ]] || die "n8n installation files are missing."
+[[ -d $DATA_DIR ]] || die "Current n8n data directory is missing: $DATA_DIR"
+
+archive="$(readlink -f -- "$archive")"
+backup_env="${archive%.tar.gz}.env"
+[[ "$archive" == *.tar.gz && -f $backup_env ]] || die "Matching backup .env file is required: $backup_env"
+
+# Treat backup metadata as data; never source a backup's .env file.
+backup_version="$(awk -F= '$1 == "N8N_VERSION" {sub(/^[^=]*=/, ""); print; exit}' "$backup_env")"
+backup_domain="$(awk -F= '$1 == "N8N_DOMAIN" {sub(/^[^=]*=/, ""); print; exit}' "$backup_env")"
+[[ $backup_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "Backup has an invalid n8n version."
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+[[ -n ${N8N_VERSION:-} && -n ${N8N_DOMAIN:-} ]] || die "Current .env is missing required values."
+[[ $backup_domain == "$N8N_DOMAIN" ]] || die "Backup domain ($backup_domain) does not match this installation ($N8N_DOMAIN)."
+
+# Validate every archive member before stopping n8n or extracting anything.
+# Reject traversal paths, links, special files, duplicate normalized paths, and
+# archives without a regular SQLite database at the data-directory root.
+python3 - "$archive" <<'PY_VALIDATE' || die "Backup archive failed safety validation; refusing restore."
+import os
+import pathlib
+import sys
+import tarfile
+
+archive = sys.argv[1]
+MAX_ARCHIVE_BYTES = 5 * 1024**3
+MAX_UNPACKED_BYTES = 5 * 1024**3
+MAX_MEMBER_BYTES = 2 * 1024**3
+MAX_MEMBERS = 100_000
+if os.path.getsize(archive) > MAX_ARCHIVE_BYTES:
+    raise SystemExit("Compressed archive exceeds the 5 GiB safety limit")
+seen = {}
+non_directories = set()
+has_descendants = set()
+database_found = False
+member_count = 0
+total_size = 0
+with tarfile.open(archive, "r:gz") as tf:
+    for member in tf:
+        member_count += 1
+        if member_count > MAX_MEMBERS:
+            raise SystemExit("Archive contains too many members")
+        name = member.name
+        path = pathlib.PurePosixPath(name)
+        if path.is_absolute() or ".." in path.parts:
+            raise SystemExit(f"Unsafe archive path: {name!r}")
+        normalized = str(pathlib.PurePosixPath(*[part for part in path.parts if part not in ("", ".")]))
+        if normalized in ("", "."):
+            if not member.isdir():
+                raise SystemExit(f"Unexpected root member type: {name!r}")
+            continue
+        if normalized in seen:
+            raise SystemExit(f"Duplicate archive path: {normalized!r}")
+        parts = pathlib.PurePosixPath(normalized).parts
+        for index in range(1, len(parts)):
+            parent = str(pathlib.PurePosixPath(*parts[:index]))
+            if parent in non_directories:
+                raise SystemExit(f"Archive path is nested under a non-directory: {parent!r}")
+            has_descendants.add(parent)
+        if not (member.isfile() or member.isdir()):
+            raise SystemExit(f"Links and special files are not allowed: {name!r}")
+        if member.isfile() and normalized in has_descendants:
+            raise SystemExit(f"Archive file conflicts with an existing child path: {normalized!r}")
+        seen[normalized] = "dir" if member.isdir() else "file"
+        if member.isfile():
+            non_directories.add(normalized)
+            if member.size < 0 or member.size > MAX_MEMBER_BYTES:
+                raise SystemExit(f"Archive member exceeds the 2 GiB limit: {name!r}")
+            total_size += member.size
+            if total_size > MAX_UNPACKED_BYTES:
+                raise SystemExit("Archive exceeds the 5 GiB unpacked-size limit")
+        if normalized == "database.sqlite" and member.isfile():
+            database_found = True
+if not database_found:
+    raise SystemExit("Archive must contain a regular database.sqlite at its root")
+PY_VALIDATE
+
+mkdir -p "$BACKUP_DIR"
+stamp="$(date -u +%Y%m%d-%H%M%S)-${BASHPID}"
+safety_backup="$BACKUP_DIR/pre-restore-${stamp}.tar.gz"
+safety_backup_tmp="${safety_backup}.partial"
+safety_env="${safety_backup%.tar.gz}.env"
+safety_env_tmp="${safety_env}.partial"
+stage=""
+old_data="${DATA_DIR}.pre-restore-${stamp}"
+
+rollback_on_error() {
+  rc=$?
+  trap - EXIT
+  set +e
+  if (( rc != 0 )); then
+    echo "Restore failed; attempting to return to the previous data and configuration..." >&2
+    if [[ -d "$old_data" ]]; then
+      docker compose -f "$COMPOSE_FILE" stop n8n >/dev/null 2>&1
+      rm -rf -- "$DATA_DIR"
+      if mv -- "$old_data" "$DATA_DIR" && cp -- "$safety_env" "$ENV_FILE"; then
+        chown -R 1000:1000 "$DATA_DIR"
+        docker compose -f "$COMPOSE_FILE" up -d n8n >/dev/null 2>&1
+      else
+        echo "CRITICAL: Could not restore the previous data/configuration. Preserve and inspect: $safety_backup and $safety_env" >&2
+      fi
+    else
+      docker compose -f "$COMPOSE_FILE" start n8n >/dev/null 2>&1
+    fi
+
+    rollback_ready=0
+    for _ in $(seq 1 40); do
+      if curl -fsS --max-time 5 http://127.0.0.1:5678/healthz/readiness >/dev/null 2>&1; then
+        rollback_ready=1
+        break
+      fi
+      sleep 3
+    done
+    if (( rollback_ready == 1 )); then
+      echo "Previous n8n data/configuration is back and readiness is healthy." >&2
+    else
+      echo "CRITICAL: Automatic rollback could not confirm n8n readiness. Do not delete $safety_backup or $safety_env; inspect Docker logs and recover manually." >&2
+    fi
+  fi
+  [[ -z $stage ]] || rm -rf -- "$stage"
+  rm -f -- "$safety_backup_tmp" "$safety_env_tmp"
+  exit "$rc"
+}
+trap rollback_on_error EXIT
+
+echo "This replaces the current n8n data with the selected backup."
+echo "Backup version: $backup_version"
+echo "Domain:         $backup_domain"
+echo "A safety backup of the current data will be created first."
 read -r -p "Type RESTORE to continue: " answer
 [[ $answer == RESTORE ]] || { echo "Cancelled."; exit 0; }
 
-docker compose stop n8n
-trap 'docker compose start n8n >/dev/null 2>&1 || true' EXIT
-find "$DATA_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
-tar -C "$DATA_DIR" -xzf "$archive"
-chown -R 1000:1000 "$DATA_DIR"
-docker compose start n8n
+echo "Stopping n8n for a consistent SQLite backup..."
+docker compose -f "$COMPOSE_FILE" stop n8n
+tar -C "$DATA_DIR" -czf "$safety_backup_tmp" .
+tar -tzf "$safety_backup_tmp" >/dev/null || die "Safety backup verification failed; restore aborted."
+cp -- "$ENV_FILE" "$safety_env_tmp"
+chmod 600 "$safety_backup_tmp" "$safety_env_tmp"
+mv -- "$safety_env_tmp" "$safety_env"
+mv -- "$safety_backup_tmp" "$safety_backup"
+
+echo "Validating and staging the selected backup..."
+stage="$(mktemp -d "${DATA_DIR}.restore.XXXXXX")"
+tar -C "$stage" -xzf "$archive"
+[[ -f "$stage/database.sqlite" ]] || die "Extracted backup does not contain database.sqlite."
+chown -R 1000:1000 "$stage"
+
+echo "Switching to the backup's n8n version ($backup_version)..."
+mv -- "$DATA_DIR" "$old_data"
+mv -- "$stage" "$DATA_DIR"
+stage=""
+sed -i -E "s/^N8N_VERSION=.*/N8N_VERSION=$backup_version/" "$ENV_FILE"
+
+echo "Starting restored n8n and waiting for readiness..."
+docker compose -f "$COMPOSE_FILE" up -d --force-recreate n8n
+ready=0
+for _ in $(seq 1 100); do
+  if curl -fsS --max-time 5 http://127.0.0.1:5678/healthz/readiness >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  sleep 3
+done
+(( ready == 1 )) || die "Restored n8n did not become ready; automatic rollback will run."
+
+# Readiness succeeded; disable rollback before deleting the old directory.
 trap - EXIT
-rm -f "$snapshot"
-echo "Restore complete. Run: sudo n8n-status"
+rm -rf -- "$old_data"
+echo "Restore complete. n8n $backup_version is ready."
+echo "Safety backup: $safety_backup"
+echo "Run: sudo n8n-status"

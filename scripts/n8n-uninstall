@@ -14,7 +14,9 @@ cd "$STACK_DIR"
 docker compose down || true
 rm -f "$NGINX_CONF"
 rm -f /etc/letsencrypt/renewal-hooks/deploy/one-shot-n8n-nginx
-nginx -t >/dev/null 2>&1 && systemctl reload nginx || true
+if nginx -t >/dev/null 2>&1; then
+  systemctl reload nginx || true
+fi
 for cmd in n8n-version n8n-status n8n-logs n8n-restart n8n-backup n8n-update n8n-restore n8n-uninstall; do rm -f "/usr/local/bin/$cmd"; done
 rm -rf "$STACK_DIR"
 echo "n8n stack removed; data and backups were preserved."

@@ -57,28 +57,68 @@ validate_args() {
   [[ $EMAIL =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || die "Invalid email: $EMAIL"
 }
 
+port_listeners_are_only_nginx() {
+  local port="$1" listeners line
+  listeners="$(ss -H -ltnp "( sport = :${port} )")" || return 1
+  [[ -n $listeners ]] || return 1
+  while IFS= read -r line; do
+    # With root privileges ss reports owning processes. Reject unknown owners
+    # rather than assuming an active Nginx means every listener belongs to it.
+    [[ $line == *'users:(("nginx"'* ]] || return 1
+  done <<< "$listeners"
+}
+
 check_ports() {
   apt-get update -y >/dev/null
   apt-get install -y iproute2 >/dev/null
   for port in 80 443; do
-    if ss -ltn "( sport = :${port} )" | tail -n +2 | grep -q .; then
-      die "TCP port ${port} is already in use. This installer expects a fresh VPS."
+    if ss -H -ltn "( sport = :${port} )" | grep -q .; then
+      # A rerun is safe only if this install's config is valid and every
+      # listener on the occupied port is owned by Nginx.
+      if [[ -f "$NGINX_CONF" ]] &&
+         systemctl is-active --quiet nginx &&
+         nginx -t >/dev/null 2>&1 &&
+         grep -Fq "server_name $DOMAIN;" "$NGINX_CONF" &&
+         port_listeners_are_only_nginx "$port"; then
+        log "TCP port ${port} is already served by this installation's Nginx; allowing rerun."
+      else
+        die "TCP port ${port} is already in use by an unverified service. Stop it or inspect the existing Nginx configuration before rerunning."
+      fi
     fi
   done
 }
 
 configure_swap() {
-  local swap_mb
+  local swap_mb swap_path
   swap_mb="$(free -m | awk '/^Swap:/ {print $2}')"
+  swap_path=/swapfile
   if (( swap_mb < 1024 )); then
-    log "Creating ${SWAP_SIZE_GB} GB swap safety net..."
-    swapoff /swapfile 2>/dev/null || true
-    rm -f /swapfile
-    fallocate -l "${SWAP_SIZE_GB}G" /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=$((SWAP_SIZE_GB*1024)) status=progress
-    chmod 600 /swapfile
-    mkswap /swapfile >/dev/null
-    swapon /swapfile
-    grep -qE '^/swapfile[[:space:]]' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    if [[ -e /swapfile ]]; then
+      if swapon --show=NAME --noheadings | grep -Fxq /swapfile; then
+        # Preserve a live existing swapfile; add a separate one rather than replacing it.
+        swap_path=/swapfile.one-shot-n8n
+      else
+        die "/swapfile already exists but is not active swap. Refusing to overwrite an unknown file; inspect it and rerun."
+      fi
+    fi
+
+    if [[ -e "$swap_path" ]]; then
+      if swapon --show=NAME --noheadings | grep -Fxq "$swap_path"; then
+        log "Existing $swap_path is already active; preserving it."
+      else
+        die "$swap_path already exists but is not active swap. Refusing to overwrite an unknown file; inspect it and rerun."
+      fi
+    else
+      log "Creating ${SWAP_SIZE_GB} GB swap safety net at $swap_path..."
+      if ! fallocate -l "${SWAP_SIZE_GB}G" "$swap_path" 2>/dev/null; then
+        rm -f -- "$swap_path"
+        dd if=/dev/zero of="$swap_path" bs=1M count=$((SWAP_SIZE_GB*1024)) status=progress
+      fi
+      chmod 600 "$swap_path"
+      mkswap "$swap_path" >/dev/null
+      swapon "$swap_path"
+      grep -qF "$swap_path none swap sw 0 0" /etc/fstab || echo "$swap_path none swap sw 0 0" >> /etc/fstab
+    fi
   else
     log "Existing swap: ${swap_mb} MB; keeping it."
   fi
@@ -165,14 +205,25 @@ EOF_ENV
 
 install_stack_files() {
   log "Installing Compose stack and management commands..."
-  curl -fsSL "$RAW_BASE/compose.yaml" -o "$COMPOSE_FILE"
-  local cmd
+  local tmp cmd
+  tmp="$(mktemp "${STACK_DIR}/compose.yaml.XXXXXX")"
+  if ! curl -fsSL "$RAW_BASE/compose.yaml" -o "$tmp"; then
+    rm -f -- "$tmp"
+    die "Could not download Compose configuration."
+  fi
+  chmod 0600 "$tmp"
+  mv -f -- "$tmp" "$COMPOSE_FILE"
+
   for cmd in n8n-version n8n-status n8n-logs n8n-restart n8n-backup n8n-update n8n-restore n8n-uninstall; do
-    curl -fsSL "$RAW_BASE/scripts/$cmd" -o "$HELPER_DIR/$cmd"
-    chmod 0755 "$HELPER_DIR/$cmd"
+    tmp="$(mktemp "${HELPER_DIR}/${cmd}.XXXXXX")"
+    if ! curl -fsSL "$RAW_BASE/scripts/$cmd" -o "$tmp"; then
+      rm -f -- "$tmp"
+      die "Could not download helper script: $cmd"
+    fi
+    chmod 0755 "$tmp"
+    mv -f -- "$tmp" "$HELPER_DIR/$cmd"
     ln -sfn "$HELPER_DIR/$cmd" "/usr/local/bin/$cmd"
   done
-  chmod 0600 "$COMPOSE_FILE"
 }
 
 write_nginx_http() {
