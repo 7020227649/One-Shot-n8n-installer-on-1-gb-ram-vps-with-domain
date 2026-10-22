@@ -95,10 +95,10 @@ The updater:
 1. Resolves/validates the target version.
 2. Pulls the new Docker image **before stopping the current n8n**, minimizing downtime.
 3. Stops n8n for a consistent SQLite backup.
-4. Saves the current data and `.env` to `/var/backups/one-shot-n8n/`.
+4. Saves the current data and `.env` to `/var/backups/one-shot-n8n/`, then verifies the archive can be read before changing versions.
 5. Recreates the n8n container with the target version.
 6. Waits for `/healthz/readiness`, including database migrations.
-7. On failed readiness, captures the failed state and automatically restores the pre-update backup and old version.
+7. If the update fails after the verified backup exists, attempts to restore the prior data and exact prior `.env`, then checks readiness. Failed-state snapshots are retained for diagnosis.
 8. Removes the previous Docker image after a successful update to avoid filling a small VPS disk.
 
 A failed update may discard changes made by the failed version between startup and rollback; the failed-state archive is retained for investigation.
@@ -106,6 +106,9 @@ A failed update may discard changes made by the failed version between startup a
 ## Backups and restore
 
 Create a consistent backup:
+
+The backup command writes to a temporary file, verifies the archive, then publishes the completed archive and matching `.env` sidecar. It retains the five newest completed routine backups. Backups on the same VPS are not protection against VPS loss; copy important backups to a separate trusted location.
+
 
 ```bash
 sudo n8n-backup
@@ -158,7 +161,7 @@ sudo n8n-uninstall
 
 This project intentionally targets the smallest practical n8n deployment. It does not promise that every n8n workflow will fit in 1 GB RAM. For sustained high concurrency, large data processing, or production-critical workloads, use a larger VPS and consider PostgreSQL/queue-based architecture.
 
-The installer currently targets Ubuntu 22.04 only. It is designed for a **fresh** server and deliberately stops when ports 80/443 are already occupied.
+The installer currently targets Ubuntu 22.04 only. It is designed for a **fresh** server and deliberately stops when ports 80/443 are already occupied. It will not overwrite an existing inactive `/swapfile`; inspect that file rather than letting the installer replace unknown data. Downloaded stack/helper files are replaced atomically so a failed download does not leave a truncated script.
 
 ## License
 
