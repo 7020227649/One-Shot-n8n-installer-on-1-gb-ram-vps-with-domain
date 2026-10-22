@@ -71,14 +71,23 @@ configure_swap() {
   local swap_mb
   swap_mb="$(free -m | awk '/^Swap:/ {print $2}')"
   if (( swap_mb < 1024 )); then
-    log "Creating ${SWAP_SIZE_GB} GB swap safety net..."
-    swapoff /swapfile 2>/dev/null || true
-    rm -f /swapfile
-    fallocate -l "${SWAP_SIZE_GB}G" /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=$((SWAP_SIZE_GB*1024)) status=progress
-    chmod 600 /swapfile
-    mkswap /swapfile >/dev/null
-    swapon /swapfile
-    grep -qE '^/swapfile[[:space:]]' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    if [[ -e /swapfile ]]; then
+      if swapon --show=NAME --noheadings | grep -Fxq /swapfile; then
+        log "Existing /swapfile is active (${swap_mb} MB total swap); preserving it rather than replacing a live swap device."
+      else
+        die "/swapfile already exists but is not active swap. Refusing to overwrite an unknown file; inspect it and rerun."
+      fi
+    else
+      log "Creating ${SWAP_SIZE_GB} GB swap safety net..."
+      if ! fallocate -l "${SWAP_SIZE_GB}G" /swapfile 2>/dev/null; then
+        rm -f /swapfile
+        dd if=/dev/zero of=/swapfile bs=1M count=$((SWAP_SIZE_GB*1024)) status=progress
+      fi
+      chmod 600 /swapfile
+      mkswap /swapfile >/dev/null
+      swapon /swapfile
+      grep -qE '^/swapfile[[:space:]]' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    fi
   else
     log "Existing swap: ${swap_mb} MB; keeping it."
   fi
