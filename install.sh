@@ -54,8 +54,8 @@ validate_args() {
     if [[ -r "$ENV_FILE" ]]; then
       # shellcheck disable=SC1090
       source "$ENV_FILE"
-      DOMAIN="\${N8N_DOMAIN:-}"
-      EMAIL="\${N8N_EMAIL:-}"
+      DOMAIN="${N8N_DOMAIN:-}"
+      EMAIL="${N8N_EMAIL:-}"
       if [[ -n $DOMAIN && -n $EMAIL ]]; then
         log "Resuming the existing installation for $DOMAIN using saved configuration."
       else
