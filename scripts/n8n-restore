@@ -93,7 +93,9 @@ PY_VALIDATE
 mkdir -p "$BACKUP_DIR"
 stamp="$(date -u +%Y%m%d-%H%M%S)-${BASHPID}"
 safety_backup="$BACKUP_DIR/pre-restore-${stamp}.tar.gz"
+safety_backup_tmp="${safety_backup}.partial"
 safety_env="${safety_backup%.tar.gz}.env"
+safety_env_tmp="${safety_env}.partial"
 stage=""
 old_data="${DATA_DIR}.pre-restore-${stamp}"
 
@@ -131,6 +133,7 @@ rollback_on_error() {
     fi
   fi
   [[ -z $stage ]] || rm -rf -- "$stage"
+  rm -f -- "$safety_backup_tmp" "$safety_env_tmp"
   exit "$rc"
 }
 trap rollback_on_error EXIT
@@ -144,10 +147,12 @@ read -r -p "Type RESTORE to continue: " answer
 
 echo "Stopping n8n for a consistent SQLite backup..."
 docker compose -f "$COMPOSE_FILE" stop n8n
-tar -C "$DATA_DIR" -czf "$safety_backup" .
-cp -- "$ENV_FILE" "$safety_env"
-chmod 600 "$safety_backup" "$safety_env"
-tar -tzf "$safety_backup" >/dev/null || die "Safety backup verification failed; restore aborted."
+tar -C "$DATA_DIR" -czf "$safety_backup_tmp" .
+tar -tzf "$safety_backup_tmp" >/dev/null || die "Safety backup verification failed; restore aborted."
+cp -- "$ENV_FILE" "$safety_env_tmp"
+chmod 600 "$safety_backup_tmp" "$safety_env_tmp"
+mv -- "$safety_backup_tmp" "$safety_backup"
+mv -- "$safety_env_tmp" "$safety_env"
 
 echo "Validating and staging the selected backup..."
 stage="$(mktemp -d "${DATA_DIR}.restore.XXXXXX")"
