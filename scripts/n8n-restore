@@ -30,8 +30,78 @@ source "$ENV_FILE"
 [[ $backup_domain == "$N8N_DOMAIN" ]] || die "Backup domain ($backup_domain) does not match this installation ($N8N_DOMAIN)."
 
 # Validate the archive before stopping the running service.
-tar -tzf "$archive" >/dev/null || die "Backup archive is corrupt or unreadable."
-tar -tzf "$archive" | grep -Eq '(^|/)database\.sqlite$' || die "Backup does not contain database.sqlite; refusing restore."
+archive_listing="$(tar -tzf "$archive")" || die "Backup archive is corrupt or unreadable."
+grep -Eq '(^|/)database\.sqlitemkdir -p "$BACKUP_DIR"
+stamp="$(date -u +%Y%m%d-%H%M%S)"
+safety_backup="$BACKUP_DIR/pre-restore-${stamp}.tar.gz"
+safety_env="${safety_backup%.tar.gz}.env"
+stage=""
+old_data="${DATA_DIR}.pre-restore-${stamp}"
+
+rollback_on_error() {
+  rc=$?
+  trap - EXIT
+  if (( rc != 0 )); then
+    echo "Restore failed; attempting to return to the previous data and configuration..." >&2
+    if [[ -d "$old_data" ]]; then
+      docker compose -f "$COMPOSE_FILE" stop n8n >/dev/null 2>&1 || true
+      rm -rf -- "$DATA_DIR"
+      mv -- "$old_data" "$DATA_DIR"
+      cp -- "$safety_env" "$ENV_FILE" 2>/dev/null || true
+      chown -R 1000:1000 "$DATA_DIR" 2>/dev/null || true
+      docker compose -f "$COMPOSE_FILE" up -d n8n >/dev/null 2>&1 || true
+    else
+      docker compose -f "$COMPOSE_FILE" start n8n >/dev/null 2>&1 || true
+    fi
+  fi
+  [[ -z $stage ]] || rm -rf -- "$stage"
+  exit "$rc"
+}
+trap rollback_on_error EXIT
+
+echo "This replaces the current n8n data with the selected backup."
+echo "Backup version: $backup_version"
+echo "Domain:         $backup_domain"
+echo "A safety backup of the current data will be created first."
+read -r -p "Type RESTORE to continue: " answer
+[[ $answer == RESTORE ]] || { echo "Cancelled."; exit 0; }
+
+echo "Stopping n8n for a consistent SQLite backup..."
+docker compose -f "$COMPOSE_FILE" stop n8n
+tar -C "$DATA_DIR" -czf "$safety_backup" .
+cp -- "$ENV_FILE" "$safety_env"
+chmod 600 "$safety_backup" "$safety_env"
+
+echo "Validating and staging the selected backup..."
+stage="$(mktemp -d "${DATA_DIR}.restore.XXXXXX")"
+tar -C "$stage" -xzf "$archive"
+[[ -f "$stage/database.sqlite" ]] || die "Extracted backup does not contain database.sqlite."
+chown -R 1000:1000 "$stage"
+
+echo "Switching to the backup's n8n version ($backup_version)..."
+mv -- "$DATA_DIR" "$old_data"
+mv -- "$stage" "$DATA_DIR"
+stage=""
+sed -i -E "s/^N8N_VERSION=.*/N8N_VERSION=$backup_version/" "$ENV_FILE"
+
+echo "Starting restored n8n and waiting for readiness..."
+docker compose -f "$COMPOSE_FILE" up -d --force-recreate n8n
+ready=0
+for _ in $(seq 1 100); do
+  if curl -fsS --max-time 5 http://127.0.0.1:5678/healthz/readiness >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  sleep 3
+done
+(( ready == 1 )) || die "Restored n8n did not become ready; automatic rollback will run."
+
+rm -rf -- "$old_data"
+trap - EXIT
+echo "Restore complete. n8n $backup_version is ready."
+echo "Safety backup: $safety_backup"
+echo "Run: sudo n8n-status"
+ <<< "$archive_listing" || die "Backup does not contain database.sqlite; refusing restore."
 mkdir -p "$BACKUP_DIR"
 stamp="$(date -u +%Y%m%d-%H%M%S)"
 safety_backup="$BACKUP_DIR/pre-restore-${stamp}.tar.gz"
