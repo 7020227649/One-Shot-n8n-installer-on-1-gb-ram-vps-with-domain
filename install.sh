@@ -174,14 +174,25 @@ EOF_ENV
 
 install_stack_files() {
   log "Installing Compose stack and management commands..."
-  curl -fsSL "$RAW_BASE/compose.yaml" -o "$COMPOSE_FILE"
-  local cmd
+  local tmp cmd
+  tmp="$(mktemp "${STACK_DIR}/compose.yaml.XXXXXX")"
+  if ! curl -fsSL "$RAW_BASE/compose.yaml" -o "$tmp"; then
+    rm -f -- "$tmp"
+    die "Could not download Compose configuration."
+  fi
+  chmod 0600 "$tmp"
+  mv -f -- "$tmp" "$COMPOSE_FILE"
+
   for cmd in n8n-version n8n-status n8n-logs n8n-restart n8n-backup n8n-update n8n-restore n8n-uninstall; do
-    curl -fsSL "$RAW_BASE/scripts/$cmd" -o "$HELPER_DIR/$cmd"
-    chmod 0755 "$HELPER_DIR/$cmd"
+    tmp="$(mktemp "${HELPER_DIR}/${cmd}.XXXXXX")"
+    if ! curl -fsSL "$RAW_BASE/scripts/$cmd" -o "$tmp"; then
+      rm -f -- "$tmp"
+      die "Could not download helper script: $cmd"
+    fi
+    chmod 0755 "$tmp"
+    mv -f -- "$tmp" "$HELPER_DIR/$cmd"
     ln -sfn "$HELPER_DIR/$cmd" "/usr/local/bin/$cmd"
   done
-  chmod 0600 "$COMPOSE_FILE"
 }
 
 write_nginx_http() {
