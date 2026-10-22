@@ -45,7 +45,7 @@ Domain (example: n8n.example.com):
 Email  (example: you@example.com):
 ```
 
-Enter the domain/subdomain that already points to your VPS and an email address for Let's Encrypt. The installer then performs the setup automatically.
+Enter the domain/subdomain that already points to your VPS and an email address for Let's Encrypt. The installer launches the actual setup as a detached systemd service and returns to the shell; closing SSH will not stop that service.
 
 For scripts or automation, you can also provide the two values directly:
 
@@ -56,7 +56,20 @@ curl -fsSL https://raw.githubusercontent.com/7020227649/One-Shot-n8n-installer-o
 The installer resolves the current stable n8n release from the n8n GitHub releases API and stores the selected version in `/opt/one-shot-n8n/.env`. Re-running the installer for the same domain preserves the existing version/configuration instead of silently downgrading it. If this install's own Nginx service is already active, the installer allows that rerun; unrelated services occupying ports 80/443 still cause a safe refusal.
 
 
-**If SSH disconnects during installation:** reconnect and run the same one-command installer again. When `/opt/one-shot-n8n/.env` has already been created, the installer automatically reuses its saved domain and email and continues the remaining setup steps instead of asking you to enter them again. It preserves the existing n8n version/configuration for the same domain.
+**Check installation progress or reconnect after SSH drops:**
+
+```bash
+sudo journalctl -fu one-shot-n8n-install.service
+```
+
+To inspect the most recent logs without following them continuously:
+
+```bash
+sudo journalctl -u one-shot-n8n-install.service -n 100 --no-pager
+```
+
+If you run the installer again while its background service is active, it will report that the job is already running instead of starting a duplicate. If the service stops with an error, inspect its journal before retrying. The installer reuses the domain, email, and n8n version saved in `/opt/one-shot-n8n/.env` when available.
+
 > **Before installing:** your DNS A/AAAA record must already point to this VPS, and the VPS/cloud firewall must allow inbound TCP **80** and **443** for Let's Encrypt and HTTPS.
 
 ## 1 GB tuning
@@ -178,6 +191,8 @@ Run the same checks locally from the repository root:
 ```bash
 bash -n install.sh scripts/*
 shellcheck install.sh scripts/*
+python3 tests/test_installer_persistent_execution.py
+python3 tests/test_installer_resume.py
 python3 tests/test_restore_archive_validation.py
 python3 tests/test_lifecycle_safety.py
 ```
