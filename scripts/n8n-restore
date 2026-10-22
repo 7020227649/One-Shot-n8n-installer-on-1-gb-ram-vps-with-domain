@@ -95,12 +95,28 @@ rollback_on_error() {
     if [[ -d "$old_data" ]]; then
       docker compose -f "$COMPOSE_FILE" stop n8n >/dev/null 2>&1
       rm -rf -- "$DATA_DIR"
-      mv -- "$old_data" "$DATA_DIR"
-      cp -- "$safety_env" "$ENV_FILE"
-      chown -R 1000:1000 "$DATA_DIR"
-      docker compose -f "$COMPOSE_FILE" up -d n8n >/dev/null 2>&1
+      if mv -- "$old_data" "$DATA_DIR" && cp -- "$safety_env" "$ENV_FILE"; then
+        chown -R 1000:1000 "$DATA_DIR"
+        docker compose -f "$COMPOSE_FILE" up -d n8n >/dev/null 2>&1
+      else
+        echo "CRITICAL: Could not restore the previous data/configuration. Preserve and inspect: $safety_backup and $safety_env" >&2
+      fi
     else
       docker compose -f "$COMPOSE_FILE" start n8n >/dev/null 2>&1
+    fi
+
+    rollback_ready=0
+    for _ in $(seq 1 40); do
+      if curl -fsS --max-time 5 http://127.0.0.1:5678/healthz/readiness >/dev/null 2>&1; then
+        rollback_ready=1
+        break
+      fi
+      sleep 3
+    done
+    if (( rollback_ready == 1 )); then
+      echo "Previous n8n data/configuration is back and readiness is healthy." >&2
+    else
+      echo "CRITICAL: Automatic rollback could not confirm n8n readiness. Do not delete $safety_backup or $safety_env; inspect Docker logs and recover manually." >&2
     fi
   fi
   [[ -z $stage ]] || rm -rf -- "$stage"
