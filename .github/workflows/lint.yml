@@ -16,6 +16,8 @@ jobs:
         run: bash -n install.sh scripts/*
       - name: ShellCheck
         run: shellcheck install.sh scripts/*
+      - name: Installer persistent execution regression test
+        run: python3 tests/test_installer_persistent_execution.py
       - name: Installer resume regression test
         run: python3 tests/test_installer_resume.py
       - name: Stable-release version resolver regression test
