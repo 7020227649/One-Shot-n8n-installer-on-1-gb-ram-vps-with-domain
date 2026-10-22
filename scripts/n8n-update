@@ -151,8 +151,8 @@ tar -C "$DATA_DIR" -czf "$backup_tmp" .
 tar -tzf "$backup_tmp" >/dev/null || die "Pre-update backup verification failed; update aborted."
 cp -- "$ENV_FILE" "$backup_env_tmp"
 chmod 0600 "$backup_tmp" "$backup_env_tmp"
-mv -- "$backup_tmp" "$backup"
 mv -- "$backup_env_tmp" "$backup_env"
+mv -- "$backup_tmp" "$backup"
 backup_ready=1
 
 echo "Switching to n8n $target..."
