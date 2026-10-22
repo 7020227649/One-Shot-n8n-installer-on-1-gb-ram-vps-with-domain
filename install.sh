@@ -163,16 +163,22 @@ prepare_dirs() {
 }
 
 latest_stable() {
-  curl -fsSL -H 'Accept: application/vnd.github+json' -H 'User-Agent: one-shot-n8n-installer' \
-    'https://api.github.com/repos/n8n-io/n8n/releases?per_page=30' |
+  curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 30 \
+    -H 'Accept: application/vnd.github+json' -H 'User-Agent: one-shot-n8n-installer' \
+    'https://api.github.com/repos/n8n-io/n8n/releases?per_page=100' |
     python3 -c '
-import json, sys
-for r in json.load(sys.stdin):
-    if not r.get("draft") and not r.get("prerelease"):
-        print(r["tag_name"].split("@", 1)[-1].lstrip("v"))
+import json, re, sys
+releases = json.load(sys.stdin)
+# GitHub lists channel aliases (for example, "stable") alongside versioned
+# releases. Select the first non-draft, non-prerelease semver release tag only.
+for r in releases:
+    tag = r.get("tag_name", "")
+    match = re.fullmatch(r"(?:n8n@)?v?(\\d+\\.\\d+\\.\\d+)", tag)
+    if not r.get("draft") and not r.get("prerelease") and match:
+        print(match.group(1))
         break
 else:
-    raise SystemExit("No stable n8n release found")
+    raise SystemExit("No semantic-version stable n8n release found in GitHub API response")
 '
 }
 
