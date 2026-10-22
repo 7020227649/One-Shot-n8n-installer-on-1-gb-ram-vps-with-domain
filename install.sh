@@ -17,6 +17,8 @@ HELPER_DIR="${STACK_DIR}/bin"
 RAW_BASE="${ONE_SHOT_REPO_RAW:-https://raw.githubusercontent.com/7020227649/One-Shot-n8n-installer-on-1-gb-ram-vps-with-domain/main}"
 MIN_RAM_MB=768
 SWAP_SIZE_GB=2
+INSTALLER_UNIT="one-shot-n8n-install.service"
+BOOTSTRAP_SCRIPT="${STACK_DIR}/install.sh"
 
 log() { printf '\n[one-shot] %s\n' "$*"; }
 die() { printf '\n[error] %s\n' "$*" >&2; exit 1; }
@@ -343,10 +345,63 @@ HOOK
   systemctl enable --now certbot.timer >/dev/null 2>&1 || true
 }
 
+
+start_persistent_install() {
+  command -v systemd-run >/dev/null 2>&1 || die "systemd-run is required to keep installation running after SSH disconnects."
+  command -v journalctl >/dev/null 2>&1 || die "journalctl is required to inspect installation progress."
+
+  if systemctl is-active --quiet "$INSTALLER_UNIT"; then
+    log "The installer is already running as a background service."
+    printf 'Follow progress: sudo journalctl -fu %s\n' "$INSTALLER_UNIT"
+    return 0
+  fi
+
+  install -d -m 0755 "$STACK_DIR"
+  local tmp
+  tmp="$(mktemp "${STACK_DIR}/install.sh.XXXXXX")"
+  if ! curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 60 "$RAW_BASE/install.sh" -o "$tmp"; then
+    rm -f -- "$tmp"
+    die "Could not download a persistent copy of the installer."
+  fi
+  chmod 0755 "$tmp"
+  mv -f -- "$tmp" "$BOOTSTRAP_SCRIPT"
+
+  log "Starting installation in the background so SSH disconnects will not stop it..."
+  if ! systemd-run --unit="$INSTALLER_UNIT" --collect --property=Type=exec \
+      /usr/bin/env ONE_SHOT_INSTALLER_SERVICE=1 /bin/bash "$BOOTSTRAP_SCRIPT" "$DOMAIN" "$EMAIL"; then
+    if systemctl is-active --quiet "$INSTALLER_UNIT"; then
+      log "The background installer is already running."
+    else
+      die "Could not start the background installer. Check: sudo journalctl -u $INSTALLER_UNIT -n 100 --no-pager"
+    fi
+  fi
+
+  printf '\nThe installation is running independently of this SSH connection.\n'
+  printf 'View progress: sudo journalctl -fu %s\n' "$INSTALLER_UNIT"
+  printf 'View recent logs: sudo journalctl -u %s -n 100 --no-pager\n' "$INSTALLER_UNIT"
+}
+
 main() {
   require_root
+
+  # A reconnect should not start a second installation or prompt for values
+  # while the detached systemd service is already doing the work.
+  if [[ ${ONE_SHOT_INSTALLER_SERVICE:-0} != 1 ]] && systemctl is-active --quiet "$INSTALLER_UNIT"; then
+    log "The installer is already running independently of SSH."
+    printf 'Follow progress: sudo journalctl -fu %s\n' "$INSTALLER_UNIT"
+    return 0
+  fi
+
   validate_args "$@"
   check_system
+
+  # The parent process exits after launching the transient service. The
+  # service keeps running if this SSH session closes or its client disconnects.
+  if [[ ${ONE_SHOT_INSTALLER_SERVICE:-0} != 1 ]]; then
+    start_persistent_install
+    return 0
+  fi
+
   check_ports
   configure_swap
   install_docker_and_proxy
