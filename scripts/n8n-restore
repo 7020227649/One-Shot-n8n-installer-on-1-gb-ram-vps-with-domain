@@ -91,7 +91,7 @@ if not database_found:
 PY_VALIDATE
 
 mkdir -p "$BACKUP_DIR"
-stamp="$(date -u +%Y%m%d-%H%M%S)"
+stamp="$(date -u +%Y%m%d-%H%M%S)-$"
 safety_backup="$BACKUP_DIR/pre-restore-${stamp}.tar.gz"
 safety_env="${safety_backup%.tar.gz}.env"
 stage=""
