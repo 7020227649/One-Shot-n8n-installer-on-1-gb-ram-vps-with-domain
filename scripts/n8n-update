@@ -4,6 +4,7 @@ STACK_DIR=/opt/one-shot-n8n
 DATA_DIR=/var/lib/one-shot-n8n
 BACKUP_DIR=/var/backups/one-shot-n8n
 cd "$STACK_DIR"
+# shellcheck disable=SC1091
 source .env
 
 die() { echo "ERROR: $*" >&2; exit 1; }
