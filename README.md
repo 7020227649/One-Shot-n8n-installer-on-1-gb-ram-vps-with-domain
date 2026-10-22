@@ -165,3 +165,19 @@ The installer currently targets Ubuntu 22.04 only. It is designed for a **fresh*
 ## License
 
 See [LICENSE](LICENSE).
+
+
+## Development checks
+
+The GitHub Actions workflow runs on Ubuntu 22.04, the installer's supported release. It checks Bash syntax, ShellCheck, restore archive validation (including malicious archive paths and file types), and lifecycle safety guard tests for backup publication, update rollback, restore limits, and swap-file protection.
+
+Run the same checks locally from the repository root:
+
+```bash
+bash -n install.sh scripts/*
+shellcheck install.sh scripts/*
+python3 tests/test_restore_archive_validation.py
+python3 tests/test_lifecycle_safety.py
+```
+
+These checks are regression safeguards, not a substitute for full fresh-VM installation and failure-injection testing.
