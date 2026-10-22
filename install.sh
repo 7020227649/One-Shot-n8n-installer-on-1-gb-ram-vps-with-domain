@@ -48,7 +48,22 @@ prompt_for_details() {
 validate_args() {
   [[ $# -eq 0 || $# -eq 2 ]] || die "Usage: $0 [domain email]"
   if [[ $# -eq 0 ]]; then
-    prompt_for_details
+    # If a prior run reached environment creation before SSH disconnected,
+    # reuse its saved values so rerunning the one-command installer resumes
+    # automatically instead of asking for the domain/email again.
+    if [[ -r "$ENV_FILE" ]]; then
+      # shellcheck disable=SC1090
+      source "$ENV_FILE"
+      DOMAIN="${N8N_DOMAIN:-}"
+      EMAIL="${N8N_EMAIL:-}"
+      if [[ -n $DOMAIN && -n $EMAIL ]]; then
+        log "Resuming the existing installation for $DOMAIN using saved configuration."
+      else
+        prompt_for_details
+      fi
+    else
+      prompt_for_details
+    fi
   else
     DOMAIN="$1"
     EMAIL="$2"
@@ -56,7 +71,6 @@ validate_args() {
   [[ $DOMAIN =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$ ]] || die "Invalid domain: $DOMAIN"
   [[ $EMAIL =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || die "Invalid email: $EMAIL"
 }
-
 port_listeners_are_only_nginx() {
   local port="$1" listeners line
   listeners="$(ss -H -ltnp "( sport = :${port} )")" || return 1
