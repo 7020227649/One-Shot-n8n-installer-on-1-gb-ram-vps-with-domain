@@ -41,17 +41,18 @@ old_data="${DATA_DIR}.pre-restore-${stamp}"
 rollback_on_error() {
   rc=$?
   trap - EXIT
+  set +e
   if (( rc != 0 )); then
     echo "Restore failed; attempting to return to the previous data and configuration..." >&2
     if [[ -d "$old_data" ]]; then
-      docker compose -f "$COMPOSE_FILE" stop n8n >/dev/null 2>&1 || true
+      docker compose -f "$COMPOSE_FILE" stop n8n >/dev/null 2>&1
       rm -rf -- "$DATA_DIR"
       mv -- "$old_data" "$DATA_DIR"
-      cp -- "$safety_env" "$ENV_FILE" 2>/dev/null || true
-      chown -R 1000:1000 "$DATA_DIR" 2>/dev/null || true
-      docker compose -f "$COMPOSE_FILE" up -d n8n >/dev/null 2>&1 || true
+      cp -- "$safety_env" "$ENV_FILE"
+      chown -R 1000:1000 "$DATA_DIR"
+      docker compose -f "$COMPOSE_FILE" up -d n8n >/dev/null 2>&1
     else
-      docker compose -f "$COMPOSE_FILE" start n8n >/dev/null 2>&1 || true
+      docker compose -f "$COMPOSE_FILE" start n8n >/dev/null 2>&1
     fi
   fi
   [[ -z $stage ]] || rm -rf -- "$stage"
@@ -168,9 +169,8 @@ for _ in $(seq 1 100); do
 done
 (( ready == 1 )) || die "Restored n8n did not become ready; automatic rollback will run."
 
-success=1
-rm -rf -- "$old_data"
 trap - EXIT
+rm -rf -- "$old_data"
 echo "Restore complete. n8n $backup_version is ready."
 echo "Safety backup: $safety_backup"
 echo "Run: sudo n8n-status"
