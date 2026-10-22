@@ -32,6 +32,7 @@ require(
     'chmod 0600 "$archive_tmp" "$env_tmp"',
     'stamp="$(date -u +%Y%m%d-%H%M%S)-${BASHPID}"',
     'if [[ $started == 1 ]]',
+    'mv -- "$env_tmp" "$env_file"\nmv -- "$archive_tmp" "$archive"',
 )
 require(
     "scripts/n8n-update",
@@ -40,6 +41,7 @@ require(
     'wait_ready 60',
     'tar -tzf "$failed_state" >/dev/null 2>&1',
     'stamp="$(date -u +%Y%m%d-%H%M%S)-${BASHPID}"',
+    'mv -- "$backup_env_tmp" "$backup_env"\nmv -- "$backup_tmp" "$backup"',
 )
 require(
     "scripts/n8n-restore",
