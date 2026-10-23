@@ -26,6 +26,22 @@ trap '_rc=$?; _msg="Installation failed at line $LINENO (exit $_rc)."; [[ -f "$C
 
 require_root() { [[ $EUID -eq 0 ]] || die "Run as root or with sudo."; }
 
+heal_package_manager() {
+  export DEBIAN_FRONTEND=noninteractive
+  # Wait if unattended-upgrades or another apt process holds locks (up to 30s)
+  local waited=0
+  while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
+    if (( waited >= 30 )); then
+      break
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  # Recover interrupted package manager state from prior failed commands
+  dpkg --configure -a >/dev/null 2>&1 || true
+  apt-get install -f -y >/dev/null 2>&1 || true
+}
+
 check_system() {
   [[ -r /etc/os-release ]] || die "Cannot detect operating system."
   # shellcheck disable=SC1091
@@ -86,8 +102,33 @@ port_listeners_are_only_nginx() {
 }
 
 check_ports() {
+  heal_package_manager
   apt-get update -y >/dev/null
   apt-get install -y iproute2 >/dev/null
+
+  # Handle dirty VPS edge case: if Nginx was already present with only the default
+  # welcome page, clear the default site so it does not conflict with this domain.
+  if [[ -L /etc/nginx/sites-enabled/default || -f /etc/nginx/sites-enabled/default ]]; then
+    if [[ ! -f "$NGINX_CONF" ]] && systemctl is-active --quiet nginx; then
+      local other_sites
+      other_sites="$(find /etc/nginx/sites-enabled -maxdepth 1 -type l ! -name default 2>/dev/null | wc -l)"
+      if (( other_sites == 0 )); then
+        log "Disabling default Nginx welcome site to prepare for n8n domain configuration..."
+        rm -f /etc/nginx/sites-enabled/default
+        systemctl reload nginx 2>/dev/null || true
+      fi
+    fi
+  fi
+
+  # Handle dirty VPS edge case: if default Apache2 is running, disable it to prevent port 80/443 conflicts.
+  if systemctl is-active --quiet apache2 2>/dev/null; then
+    if [[ ! -f "$NGINX_CONF" ]]; then
+      log "Stopping default Apache2 service to allow Nginx reverse proxy on ports 80/443..."
+      systemctl stop apache2 >/dev/null 2>&1 || true
+      systemctl disable apache2 >/dev/null 2>&1 || true
+    fi
+  fi
+
   for port in 80 443; do
     if ss -H -ltn "( sport = :${port} )" | grep -q .; then
       # A rerun is safe only if this install's config is valid and every
@@ -147,7 +188,7 @@ SYSCTL
 }
 
 install_docker_and_proxy() {
-  export DEBIAN_FRONTEND=noninteractive
+  heal_package_manager
   log "Installing Nginx, Certbot and prerequisites..."
   apt-get install -y ca-certificates curl gnupg nginx certbot python3 >/dev/null
 
@@ -289,7 +330,7 @@ wait_ready() {
 
 start_stack() {
   log "Pulling n8n image and starting the stack..."
-  (cd "$STACK_DIR" && docker compose pull n8n >/dev/null && docker compose up -d n8n >/dev/null)
+  (cd "$STACK_DIR" && docker compose pull n8n >/dev/null && docker compose up -d --force-recreate --remove-orphans n8n >/dev/null)
   wait_ready || { docker compose -f "$COMPOSE_FILE" logs --tail=150 n8n >&2 || true; die "n8n did not become ready."; }
 }
 
@@ -368,6 +409,9 @@ start_persistent_install() {
     printf 'Follow progress: sudo journalctl -fu %s\n' "$INSTALLER_UNIT"
     return 0
   fi
+
+  # Reset any failed prior transient unit state
+  systemctl reset-failed "$INSTALLER_UNIT" >/dev/null 2>&1 || true
 
   install -d -m 0755 "$STACK_DIR"
   local tmp
