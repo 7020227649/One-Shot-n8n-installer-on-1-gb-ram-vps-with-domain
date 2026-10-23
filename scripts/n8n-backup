@@ -11,8 +11,7 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 command -v docker >/dev/null 2>&1 || die "Docker is not installed."
 command -v tar >/dev/null 2>&1 || die "tar is not installed."
 
-mkdir -p "$BACKUP_DIR"
-chmod 0700 "$BACKUP_DIR"
+install -d -m 0700 "$BACKUP_DIR"
 cd "$STACK_DIR"
 # shellcheck disable=SC1091
 source .env
@@ -57,7 +56,12 @@ docker compose -f "$STACK_DIR/compose.yaml" start n8n
 started=0
 
 # Retain the five newest completed archives and their matching metadata.
-mapfile -t backups < <(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'n8n-*.tar.gz' -printf '%T@ %p\n' | sort -nr | cut -d' ' -f2-)
+# Use NUL-delimited output to handle backup paths that might contain spaces.
+mapfile -d '' -t backups < <(
+  find "$BACKUP_DIR" -maxdepth 1 -type f -name 'n8n-*.tar.gz' -printf '%T@\t%p\0' |
+    sort -zrn |
+    while IFS=$'\t' read -r -d '' _ts path; do printf '%s\0' "$path"; done
+)
 for ((i=5; i<${#backups[@]}; i++)); do
   rm -f -- "${backups[$i]}" "${backups[$i]%.tar.gz}.env"
 done

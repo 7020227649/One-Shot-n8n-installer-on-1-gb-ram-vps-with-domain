@@ -3,8 +3,8 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-INSTALLER = (ROOT / "install.sh").read_text()
-README = (ROOT / "README.md").read_text()
+INSTALLER = (ROOT / "install.sh").read_text().replace('\r\n', '\n')
+README = (ROOT / "README.md").read_text().replace('\r\n', '\n')
 
 
 def require(text, *needles):

@@ -5,13 +5,19 @@ DATA_DIR=/var/lib/one-shot-n8n
 BACKUP_DIR=/var/backups/one-shot-n8n
 NGINX_CONF=/etc/nginx/conf.d/one-shot-n8n.conf
 
+[[ $EUID -eq 0 ]] || { echo "ERROR: Run with sudo." >&2; exit 1; }
+
 echo "This removes the n8n container, Compose files, Nginx config, and helper commands."
 echo "It PRESERVES: $DATA_DIR and $BACKUP_DIR"
-read -r -p "Type REMOVE to continue: " answer
+read -r -p "Type REMOVE to continue: " answer </dev/tty
 [[ $answer == REMOVE ]] || { echo "Cancelled."; exit 0; }
 
-cd "$STACK_DIR"
-docker compose down || true
+if [[ -d "$STACK_DIR" ]]; then
+  cd "$STACK_DIR"
+  docker compose down || true
+  cd /
+fi
+
 rm -f "$NGINX_CONF"
 rm -f /etc/letsencrypt/renewal-hooks/deploy/one-shot-n8n-nginx
 if nginx -t >/dev/null 2>&1; then

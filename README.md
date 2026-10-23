@@ -1,163 +1,193 @@
 # One-Shot n8n Installer — 1 GB RAM VPS
 
-A one-command installer for a **fresh Ubuntu 22.04 VPS with about 1 GiB RAM**, a domain, and root/sudo access. It installs n8n with SQLite, Docker Compose, Nginx, Let's Encrypt HTTPS, persistent storage, 2 GB swap, and low-memory defaults.
+A production-ready, one-command installer for a **fresh Ubuntu 22.04 VPS with about 1 GiB RAM**, a domain, and root/sudo access. It automatically provisions Docker Compose, n8n with SQLite persistence, Nginx reverse proxy, Let's Encrypt SSL/TLS, 2 GB swap safety net, and stability-first low-memory defaults.
 
 ## What it installs
 
 ```text
 Internet
    │
- HTTPS :443
+ HTTPS :443 (Let's Encrypt SSL/TLS)
    │
- Nginx
+ Nginx Reverse Proxy
    │
- 127.0.0.1:5678
+ 127.0.0.1:5678 (Localhost only)
    │
- n8n Docker container
+ n8n Docker Container (Node.js heap: 384 MB, Container RAM: 700 MB)
    │
- SQLite + /home/node/.n8n
+ SQLite (/var/lib/one-shot-n8n) + Binary Files (/home/node/.n8n/binaryData)
 ```
 
-The n8n port is bound to localhost; Nginx is the public entry point. Redis, PostgreSQL, queue mode, workers, and other optional services are intentionally not installed because this project targets a 1 GB VPS.
+The n8n port is bound strictly to `127.0.0.1`; Nginx is the public entry point. Heavy external dependencies like PostgreSQL and Redis are intentionally excluded to ensure maximum stability and reliability within 1 GB RAM.
 
-## Requirements
+---
 
-- Fresh Ubuntu **22.04** VPS
-- About **1 GB RAM** (the installer refuses machines below 768 MiB)
-- amd64 or arm64
-- Root or sudo access
-- A DNS A/AAAA record already pointing the domain to the VPS
-- TCP ports 80 and 443 available
-- Outbound internet access
+## Prerequisites
 
-## Install
+Before running the installer:
 
-The easiest method is **one command**. You do not need to edit the command or understand Bash arguments.
+1. **Ubuntu 22.04 VPS**: Fresh installation on `amd64` or `arm64` architecture with at least 768 MiB RAM.
+2. **DNS Record Set Up**: Create a DNS **A record** (or AAAA for IPv6) pointing your subdomain (e.g., `n8n.yourdomain.com`) to your VPS public IP.
+3. **Firewall / Ports Open**: Ensure inbound TCP ports **80** (HTTP) and **443** (HTTPS) are allowed on your cloud provider's firewall / security group (e.g., AWS Security Group, Hetzner Firewall, DigitalOcean Cloud Firewall, Oracle Cloud Security List).
+4. **Root or Sudo Access**: Log in as `root` or a user with `sudo` privileges.
+
+---
+
+## Quick Start & Usage Instructions
+
+### Method 1: Interactive (Easiest — 1-Command)
+
+SSH into your VPS and run this single command:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/7020227649/One-Shot-n8n-installer-on-1-gb-ram-vps-with-domain/main/install.sh | sudo bash
 ```
 
-The installer will ask you:
+The installer will prompt you for your details:
 
 ```text
-Domain (example: n8n.example.com):
-Email  (example: you@example.com):
+One-Shot n8n Installer
+Enter the domain that already points to this VPS and an email for Let's Encrypt.
+
+Domain (example: n8n.example.com): n8n.yourdomain.com
+Email  (example: you@example.com): you@yourdomain.com
 ```
 
-Enter the domain/subdomain that already points to your VPS and an email address for Let's Encrypt. The installer launches the actual setup as a detached systemd service and returns to the shell; closing SSH will not stop that service.
+### Method 2: Non-Interactive (Automated Single Line)
 
-For scripts or automation, you can also provide the two values directly:
+For headless setups, cloud-init scripts, or automated provisioning, supply your domain and email directly as arguments in one line:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/7020227649/One-Shot-n8n-installer-on-1-gb-ram-vps-with-domain/main/install.sh | sudo bash -s -- "n8n.example.com" "you@example.com"
+curl -fsSL https://raw.githubusercontent.com/7020227649/One-Shot-n8n-installer-on-1-gb-ram-vps-with-domain/main/install.sh | sudo bash -s -- "n8n.yourdomain.com" "you@example.com"
 ```
 
-The installer resolves the current stable n8n release from the n8n GitHub releases API and stores the selected version in `/opt/one-shot-n8n/.env`. Re-running the installer for the same domain preserves the existing version/configuration instead of silently downgrading it. If this install's own Nginx service is already active, the installer allows that rerun; unrelated services occupying ports 80/443 still cause a safe refusal.
+Replace `n8n.yourdomain.com` with your actual domain and `you@example.com` with your email address for Let's Encrypt certificate renewal notices.
 
+---
 
-**Check installation progress or reconnect after SSH drops:**
+## How It Works
+
+1. **Detached Background Execution**: The installer launches the actual setup as a detached systemd background service (`one-shot-n8n-install.service`) and immediately returns to your shell; closing SSH will not stop that service.
+2. **Safe Idempotent Resumption**: If an installation was previously interrupted or if you reconnect via SSH, re-running the command automatically reads your saved configuration from `/opt/one-shot-n8n/.env` and resumes without asking for domain/email again.
+3. **Port Verification**: Verifies TCP ports 80/443. If this installation's own Nginx is already listening, it permits safe re-runs while blocking unknown third-party services.
+4. **Swap Safety Net**: Allocates a 2 GB swapfile if total swap is below 1 GB, and configures kernel swappiness (`vm.swappiness=10`) to prioritize physical RAM.
+5. **Secure Reverse Proxy & Auto-Renewal**: Sets up Nginx with WebSocket reverse proxying and requests an official Let's Encrypt certificate with auto-renewal timers and deploy reload hooks.
+
+---
+
+## Monitoring & Inspecting Installation
+
+To follow live installation progress:
 
 ```bash
 sudo journalctl -fu one-shot-n8n-install.service
 ```
 
-To inspect the most recent logs without following them continuously:
+To inspect the most recent 100 log lines without following continuously:
 
 ```bash
 sudo journalctl -u one-shot-n8n-install.service -n 100 --no-pager
 ```
 
-If you run the installer again while its background service is active, it will report that the job is already running instead of starting a duplicate. If the service stops with an error, inspect its journal before retrying. The installer reuses the domain, email, and n8n version saved in `/opt/one-shot-n8n/.env` when available.
-
-> **Before installing:** your DNS A/AAAA record must already point to this VPS, and the VPS/cloud firewall must allow inbound TCP **80** and **443** for Let's Encrypt and HTTPS.
-
-## 1 GB tuning
-
-The default profile is intentionally stability-first:
-
-| Setting | Default |
-| --- | ---: |
-| Host swap | 2 GB |
-| n8n Node.js heap | 384 MB |
-| n8n container RAM limit | 700 MB |
-| n8n container memory+swap | 900 MB |
-| Production concurrency | 1 |
-| Successful execution retention | Disabled |
-| Failed execution retention | Enabled |
-| Execution pruning | Enabled |
-| Execution max age | 7 days |
-| Execution max count | 2,000 |
-
-Heavy workflows can still exceed a 1 GB VPS. Large binaries, huge JSON payloads, Code nodes, and many concurrent executions need more memory.
-
-## Updating n8n
-
-Updating is a first-class feature of this project:
-
-```bash
-sudo n8n-update
+Once installation finishes, open your browser and navigate to:
+```text
+https://n8n.yourdomain.com
 ```
 
-Or specify an exact stable version:
+---
 
-```bash
-sudo n8n-update 2.41.7
-```
+## 1 GB RAM Stability Tuning
 
-The updater:
+The deployment is pre-configured with memory-conservative settings designed specifically to prevent Out-Of-Memory (OOM) crashes:
 
-1. Resolves/validates the target version.
-2. Pulls the new Docker image **before stopping the current n8n**, minimizing downtime.
-3. Stops n8n for a consistent SQLite backup.
-4. Saves the current data and `.env` to `/var/backups/one-shot-n8n/`, then verifies the archive can be read before changing versions.
-5. Recreates the n8n container with the target version.
-6. Waits for `/healthz/readiness`, including database migrations.
-7. If the update fails after the verified backup exists, attempts to restore the prior data and exact prior `.env`, then checks readiness. Failed-state snapshots are retained for diagnosis.
-8. Removes the previous Docker image after a successful update to avoid filling a small VPS disk.
+| Setting | Value | Rationale |
+|:---|---:|:---|
+| **Host swap** | 2 GB | Safety buffer against sudden memory spikes |
+| **Node.js max heap** | 384 MB | Constrains V8 garbage collection within limits |
+| **Container RAM limit** | 700 MB | Hard cgroup memory threshold |
+| **Container memory + swap** | 900 MB | Maximum combined memory threshold |
+| **Production concurrency** | 1 | Eliminates concurrency-related memory bursts |
+| **Binary data storage** | Filesystem | Offloads attachments to disk instead of SQLite / RAM |
+| **Successful execution history** | Disabled | Keeps SQLite database lightweight and responsive |
+| **Failed execution history** | Enabled | Preserves error logs for debugging workflows |
+| **Execution data pruning** | Enabled | Automatically deletes old execution logs |
+| **Max execution age** | 7 days (168h) | Prevents unbounded SQLite growth |
+| **Max execution count** | 2,000 | Caps database execution records |
 
-A failed update may discard changes made by the failed version between startup and rollback; the failed-state archive is retained for investigation.
+---
 
-## Backups and restore
+## Management Commands
 
-Create a consistent backup:
+The installer places convenient management commands in `/usr/local/bin`:
 
-```bash
-sudo n8n-backup
-```
-
-The backup command writes to a temporary file, verifies the archive, then publishes the completed archive and matching `.env` sidecar. It retains the five newest completed routine backups. Backups on the same VPS are not protection against VPS loss; copy important backups to a separate trusted location.
-
-Restore a backup:
-
-```bash
-sudo n8n-restore /var/backups/one-shot-n8n/<backup>.tar.gz
-```
-
-The restore command requires typing `RESTORE` because it replaces the current n8n data directory. It validates the archive and matching `.env` metadata, checks that the backup domain matches the current installation, creates a safety backup of the current data/configuration, restores the n8n version recorded with the backup, and waits for readiness. If the restored instance fails readiness, it attempts to put the previous data and configuration back. Keep backup `.env` sidecar files alongside their `.tar.gz` archives.
-
-## Useful commands
-
+### Check Status & Health
 ```bash
 sudo n8n-status
-sudo n8n-version
+```
+Displays running containers, healthcheck readiness, host memory usage (`free -h`), and live Docker memory stats.
+
+### View Logs
+```bash
 sudo n8n-logs
+```
+Streams live container logs (`docker compose logs -f --tail=200 n8n`).
+
+### Restart n8n
+```bash
 sudo n8n-restart
-sudo n8n-backup
-sudo n8n-update
-sudo n8n-restore <backup.tar.gz>
-sudo n8n-uninstall
 ```
 
-`n8n-uninstall` removes the container, Compose stack, Nginx configuration, and helper commands while preserving `/var/lib/one-shot-n8n` and `/var/backups/one-shot-n8n`.
+### Check Installed Version
+```bash
+sudo n8n-version
+```
 
-## Files on the VPS
+### Updating n8n
+Update to the latest stable release with zero downtime image pre-pulling, automatic pre-update backup, and migration rollback:
+
+```bash
+sudo n8n-update
+```
+
+Or update to a specific version:
+
+```bash
+sudo n8n-update 2.44.5
+```
+
+The update process:
+1. Pulls the new Docker image **before** stopping the existing container.
+2. Creates and verifies an atomic SQLite backup in `/var/backups/one-shot-n8n/`.
+3. Starts the new version and polls `/healthz/readiness`.
+4. If migrations or startup fail, automatically rolls back to the previous data and configuration.
+
+### Creating Backups
+```bash
+sudo n8n-backup
+```
+Creates an atomic, consistent archive in `/var/backups/one-shot-n8n/` alongside a `.env` configuration sidecar. Automatically retains the 5 newest routine backups.
+
+### Restoring from Backup
+```bash
+sudo n8n-restore /var/backups/one-shot-n8n/n8n-2.44.5-<timestamp>.tar.gz
+```
+Validates archive integrity against path traversal and symlink exploits, creates a safety backup of current data, restores SQLite database and version, and confirms readiness with automatic rollback on failure.
+
+### Uninstalling
+```bash
+sudo n8n-uninstall
+```
+Gracefully tears down the container, Compose files, Nginx configuration, and helper symlinks, while **preserving** your workflow data (`/var/lib/one-shot-n8n`) and backups (`/var/backups/one-shot-n8n`).
+
+---
+
+## File Locations
 
 ```text
 /opt/one-shot-n8n/
-├── .env
-├── compose.yaml
-└── bin/
+├── .env                  # Configuration variables & version tag
+├── compose.yaml          # Docker Compose stack definition
+└── bin/                  # Helper script binaries
     ├── n8n-backup
     ├── n8n-logs
     ├── n8n-restart
@@ -167,34 +197,29 @@ sudo n8n-uninstall
     ├── n8n-update
     └── n8n-version
 
-/var/lib/one-shot-n8n/       # persistent n8n data
-/var/backups/one-shot-n8n/  # backups
+/var/lib/one-shot-n8n/     # Persistent n8n data & SQLite database
+/var/backups/one-shot-n8n/ # Automated backups & rollback snapshots
+/etc/nginx/conf.d/one-shot-n8n.conf # Nginx reverse proxy configuration
 ```
 
-## Notes
+---
 
-This project intentionally targets the smallest practical n8n deployment. It does not promise that every n8n workflow will fit in 1 GB RAM. For sustained high concurrency, large data processing, or production-critical workloads, use a larger VPS and consider PostgreSQL/queue-based architecture.
+## Development Checks
 
-The installer currently targets Ubuntu 22.04 only. It is designed for a **fresh** server and deliberately stops when ports 80/443 are already occupied. It will not overwrite an existing inactive `/swapfile`; inspect that file rather than letting the installer replace unknown data. Downloaded stack/helper files are replaced atomically so a failed download does not leave a truncated script.
-
-## License
-
-See [LICENSE](LICENSE).
-
-
-## Development checks
-
-The GitHub Actions workflow runs on Ubuntu 22.04, the installer's supported release. It checks Bash syntax, ShellCheck, restore archive validation (including malicious archive paths and file types), and lifecycle safety guard tests for backup publication, update rollback, restore limits, and swap-file protection.
-
-Run the same checks locally from the repository root:
+The GitHub Actions workflow runs on Ubuntu 22.04 and verifies shell syntax, ShellCheck, regression invariants, and archive security:
 
 ```bash
 bash -n install.sh scripts/*
 shellcheck install.sh scripts/*
 python3 tests/test_installer_persistent_execution.py
 python3 tests/test_installer_resume.py
+python3 tests/test_release_version_resolution.py
 python3 tests/test_restore_archive_validation.py
 python3 tests/test_lifecycle_safety.py
 ```
 
-These checks are regression safeguards, not a substitute for full fresh-VM installation and failure-injection testing.
+---
+
+## License
+
+See [LICENSE](LICENSE).

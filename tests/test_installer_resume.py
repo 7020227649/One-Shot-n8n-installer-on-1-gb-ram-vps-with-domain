@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-INSTALLER = (ROOT / "install.sh").read_text()
+INSTALLER = (ROOT / "install.sh").read_text().replace('\r\n', '\n')
 
 
 def extract_function(source, name, next_name):

@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def read(path):
-    return (ROOT / path).read_text()
+    return (ROOT / path).read_text().replace('\r\n', '\n')
 
 
 def require(path, *needles):
@@ -34,6 +34,7 @@ require(
     'if [[ $started == 1 ]]',
     '# Arm cleanup before stopping: a failed stop can still leave the service stopped.\nstarted=1\ndocker compose -f "$STACK_DIR/compose.yaml" stop n8n',
     'mv -- "$env_tmp" "$env_file"\nmv -- "$archive_tmp" "$archive"',
+    '[[ $EUID -eq 0 ]]',
 )
 require(
     "scripts/n8n-update",
@@ -44,6 +45,8 @@ require(
     'tar -tzf "$failed_state" >/dev/null 2>&1',
     'stamp="$(date -u +%Y%m%d-%H%M%S)-${BASHPID}"',
     'mv -- "$backup_env_tmp" "$backup_env"\nmv -- "$backup_tmp" "$backup"',
+    '[[ $EUID -eq 0 ]]',
+    'read -r -p "Continue with backup + update? [y/N] " answer </dev/tty',
 )
 require(
     "scripts/n8n-restore",
@@ -53,11 +56,34 @@ require(
     'tar -tzf "$safety_backup_tmp" >/dev/null',
     'stamp="$(date -u +%Y%m%d-%H%M%S)-${BASHPID}"',
     'curl -fsS --max-time 5 http://127.0.0.1:5678/healthz/readiness',
+    '[[ $EUID -eq 0 ]]',
+    'read -r -p "Type RESTORE to continue: " answer </dev/tty',
 )
 forbid(
     "scripts/n8n-restore",
     'source "$backup_env"',
-    "tar -C \"$DATA_DIR\" -xzf \"$archive\"",
+    'tar -C "$DATA_DIR" -xzf "$archive"',
+)
+require(
+    "scripts/n8n-status",
+    '[[ $EUID -eq 0 ]]',
+)
+require(
+    "scripts/n8n-restart",
+    '[[ $EUID -eq 0 ]]',
+)
+require(
+    "scripts/n8n-logs",
+    '[[ $EUID -eq 0 ]]',
+)
+require(
+    "scripts/n8n-version",
+    '[[ $EUID -eq 0 ]]',
+)
+require(
+    "scripts/n8n-uninstall",
+    '[[ $EUID -eq 0 ]]',
+    'read -r -p "Type REMOVE to continue: " answer </dev/tty',
 )
 require(
     "install.sh",
@@ -67,8 +93,17 @@ require(
     'Refusing to overwrite an unknown file',
     'port_listeners_are_only_nginx "$port"',
     'grep -Fq "server_name $DOMAIN;" "$NGINX_CONF"',
+    'ssl_protocols TLSv1.2 TLSv1.3',
+    '--no-eff-email',
 )
 forbid("install.sh", "rm -f /swapfile")
+
+require(
+    "compose.yaml",
+    'user: "1000:1000"',
+    'healthcheck:',
+    'N8N_DEFAULT_BINARY_DATA_MODE: filesystem',
+)
 
 # Exercise the actual listener-owner predicate with representative ss output.
 # This catches active Nginx masking an unrelated service on the other port.

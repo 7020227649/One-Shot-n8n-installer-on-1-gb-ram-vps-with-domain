@@ -8,7 +8,7 @@ import tarfile
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-restore_script = (ROOT / "scripts/n8n-restore").read_text()
+restore_script = (ROOT / "scripts/n8n-restore").read_text().replace('\r\n', '\n')
 match = re.search(
     r"python3 - \"\$archive\" <<'PY_VALIDATE'[^\n]*\n(.*?)\nPY_VALIDATE",
     restore_script,
@@ -77,3 +77,5 @@ with tempfile.TemporaryDirectory() as directory:
     if result.returncode == 0:
         raise AssertionError("truncated archive was unexpectedly accepted")
     print("PASS truncated-archive")
+
+print("PASS: all restore archive validation tests passed")

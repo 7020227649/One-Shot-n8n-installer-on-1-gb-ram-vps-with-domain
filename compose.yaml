@@ -4,6 +4,7 @@ services:
     container_name: one-shot-n8n
     restart: unless-stopped
     init: true
+    user: "1000:1000"
     mem_limit: ${N8N_MEMORY_LIMIT_MB}m
     memswap_limit: ${N8N_MEMORY_SWAP_LIMIT_MB}m
     stop_grace_period: 60s
@@ -20,6 +21,7 @@ services:
       N8N_DIAGNOSTICS_ENABLED: "false"
       EXECUTIONS_MODE: regular
       N8N_CONCURRENCY_PRODUCTION_LIMIT: ${N8N_CONCURRENCY}
+      # Low-memory retention optimizations for 1 GB RAM VPS
       EXECUTIONS_DATA_SAVE_ON_SUCCESS: none
       EXECUTIONS_DATA_SAVE_ON_ERROR: all
       EXECUTIONS_DATA_SAVE_ON_PROGRESS: "false"
@@ -27,11 +29,19 @@ services:
       EXECUTIONS_DATA_PRUNE: "true"
       EXECUTIONS_DATA_MAX_AGE: ${N8N_EXECUTION_MAX_AGE_HOURS}
       EXECUTIONS_DATA_PRUNE_MAX_COUNT: ${N8N_EXECUTION_MAX_COUNT}
+      # Store binary data on disk to avoid SQLite bloat and Node heap exhaustion
+      N8N_DEFAULT_BINARY_DATA_MODE: filesystem
       NODE_OPTIONS: --max-old-space-size=${N8N_NODE_HEAP_MB}
       GENERIC_TIMEZONE: ${N8N_TIMEZONE}
       TZ: ${N8N_TIMEZONE}
     volumes:
       - ${N8N_DATA_DIR}:/home/node/.n8n
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:5678/healthz/readiness >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     logging:
       driver: json-file
       options:

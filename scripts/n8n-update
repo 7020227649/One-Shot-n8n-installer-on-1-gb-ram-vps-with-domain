@@ -51,8 +51,7 @@ fi
 
 old_version="$N8N_VERSION"
 stamp="$(date -u +%Y%m%d-%H%M%S)-${BASHPID}"
-mkdir -p "$BACKUP_DIR"
-chmod 0700 "$BACKUP_DIR"
+install -d -m 0700 "$BACKUP_DIR"
 backup="$BACKUP_DIR/pre-update-${old_version}-${stamp}.tar.gz"
 backup_tmp="${backup}.partial.$$"
 backup_env="${backup%.tar.gz}.env"
@@ -140,7 +139,7 @@ trap on_exit EXIT
 echo "Current version: $old_version"
 echo "Target version:  $target"
 echo
-read -r -p "Continue with backup + update? [y/N] " answer
+read -r -p "Continue with backup + update? [y/N] " answer </dev/tty
 [[ $answer =~ ^[Yy]$ ]] || { echo "Cancelled."; exit 0; }
 
 echo "Pulling n8n $target image before downtime..."

@@ -20,8 +20,8 @@ backup_env="${archive%.tar.gz}.env"
 [[ "$archive" == *.tar.gz && -f $backup_env ]] || die "Matching backup .env file is required: $backup_env"
 
 # Treat backup metadata as data; never source a backup's .env file.
-backup_version="$(awk -F= '$1 == "N8N_VERSION" {sub(/^[^=]*=/, ""); print; exit}' "$backup_env")"
-backup_domain="$(awk -F= '$1 == "N8N_DOMAIN" {sub(/^[^=]*=/, ""); print; exit}' "$backup_env")"
+backup_version="$(awk -F= '$1 == "N8N_VERSION" {sub(/^[^=]*=/, ""); sub(/\r$/, ""); print; exit}' "$backup_env")"
+backup_domain="$(awk -F= '$1 == "N8N_DOMAIN" {sub(/^[^=]*=/, ""); sub(/\r$/, ""); print; exit}' "$backup_env")"
 [[ $backup_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "Backup has an invalid n8n version."
 # shellcheck disable=SC1090
 source "$ENV_FILE"
@@ -90,7 +90,7 @@ if not database_found:
     raise SystemExit("Archive must contain a regular database.sqlite at its root")
 PY_VALIDATE
 
-mkdir -p "$BACKUP_DIR"
+install -d -m 0700 "$BACKUP_DIR"
 stamp="$(date -u +%Y%m%d-%H%M%S)-${BASHPID}"
 safety_backup="$BACKUP_DIR/pre-restore-${stamp}.tar.gz"
 safety_backup_tmp="${safety_backup}.partial"
@@ -108,7 +108,8 @@ rollback_on_error() {
     if [[ -d "$old_data" ]]; then
       docker compose -f "$COMPOSE_FILE" stop n8n >/dev/null 2>&1
       rm -rf -- "$DATA_DIR"
-      if mv -- "$old_data" "$DATA_DIR" && cp -- "$safety_env" "$ENV_FILE"; then
+      # Only restore .env if the safety copy was fully written before the failure.
+      if [[ -f "$safety_env" ]] && mv -- "$old_data" "$DATA_DIR" && cp -- "$safety_env" "$ENV_FILE"; then
         chown -R 1000:1000 "$DATA_DIR"
         docker compose -f "$COMPOSE_FILE" up -d n8n >/dev/null 2>&1
       else
@@ -119,7 +120,7 @@ rollback_on_error() {
     fi
 
     rollback_ready=0
-    for _ in $(seq 1 40); do
+    for ((i=0; i<40; i++)); do
       if curl -fsS --max-time 5 http://127.0.0.1:5678/healthz/readiness >/dev/null 2>&1; then
         rollback_ready=1
         break
@@ -142,7 +143,7 @@ echo "This replaces the current n8n data with the selected backup."
 echo "Backup version: $backup_version"
 echo "Domain:         $backup_domain"
 echo "A safety backup of the current data will be created first."
-read -r -p "Type RESTORE to continue: " answer
+read -r -p "Type RESTORE to continue: " answer </dev/tty
 [[ $answer == RESTORE ]] || { echo "Cancelled."; exit 0; }
 
 echo "Stopping n8n for a consistent SQLite backup..."
@@ -169,7 +170,7 @@ sed -i -E "s/^N8N_VERSION=.*/N8N_VERSION=$backup_version/" "$ENV_FILE"
 echo "Starting restored n8n and waiting for readiness..."
 docker compose -f "$COMPOSE_FILE" up -d --force-recreate n8n
 ready=0
-for _ in $(seq 1 100); do
+for ((i=0; i<100; i++)); do
   if curl -fsS --max-time 5 http://127.0.0.1:5678/healthz/readiness >/dev/null 2>&1; then
     ready=1
     break

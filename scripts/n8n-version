@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+[[ $EUID -eq 0 ]] || { echo "ERROR: Run with sudo." >&2; exit 1; }
 cd /opt/one-shot-n8n
 # shellcheck disable=SC1091
 source .env

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+[[ $EUID -eq 0 ]] || { echo "ERROR: Run with sudo." >&2; exit 1; }
 cd /opt/one-shot-n8n
 docker compose logs -f --tail=200 n8n

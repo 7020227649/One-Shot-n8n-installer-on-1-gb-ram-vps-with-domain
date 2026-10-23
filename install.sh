@@ -22,7 +22,7 @@ BOOTSTRAP_SCRIPT="${STACK_DIR}/install.sh"
 
 log() { printf '\n[one-shot] %s\n' "$*"; }
 die() { printf '\n[error] %s\n' "$*" >&2; exit 1; }
-trap 'die "Installation failed at line $LINENO. Check: docker compose -f \"$COMPOSE_FILE\" logs --tail=100 n8n"' ERR
+trap '_rc=$?; _msg="Installation failed at line $LINENO (exit $_rc)."; [[ -f "$COMPOSE_FILE" ]] && _msg+=" Check: docker compose -f \"$COMPOSE_FILE\" logs --tail=100 n8n"; die "$_msg"' ERR
 
 require_root() { [[ $EUID -eq 0 ]] || die "Run as root or with sudo."; }
 
@@ -71,7 +71,8 @@ validate_args() {
     EMAIL="$2"
   fi
   [[ $DOMAIN =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$ ]] || die "Invalid domain: $DOMAIN"
-  [[ $EMAIL =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || die "Invalid email: $EMAIL"
+  # Exclude '#' from email to prevent it truncating .env values when sourced as shell.
+  [[ $EMAIL =~ ^[^[:space:]@#]+@[^[:space:]@#]+\.[^[:space:]@#]+$ ]] || die "Invalid email: $EMAIL"
 }
 port_listeners_are_only_nginx() {
   local port="$1" listeners line
@@ -128,7 +129,7 @@ configure_swap() {
       log "Creating ${SWAP_SIZE_GB} GB swap safety net at $swap_path..."
       if ! fallocate -l "${SWAP_SIZE_GB}G" "$swap_path" 2>/dev/null; then
         rm -f -- "$swap_path"
-        dd if=/dev/zero of="$swap_path" bs=1M count=$((SWAP_SIZE_GB*1024)) status=progress
+        dd if=/dev/zero of="$swap_path" bs=1M count=$((SWAP_SIZE_GB*1024)) status=none
       fi
       chmod 600 "$swap_path"
       mkswap "$swap_path" >/dev/null
@@ -174,8 +175,9 @@ DOCKER
 }
 
 prepare_dirs() {
-  install -d -m 0755 "$STACK_DIR" "$HELPER_DIR" "$DATA_DIR" "$BACKUP_DIR" "$ACME_WEBROOT"
-  chown 1000:1000 "$DATA_DIR"
+  install -d -m 0755 "$STACK_DIR" "$HELPER_DIR" "$BACKUP_DIR" "$ACME_WEBROOT"
+  # n8n runs as UID 1000 (the 'node' user) inside the container.
+  install -d -m 0755 -o 1000 -g 1000 "$DATA_DIR"
 }
 
 latest_stable() {
@@ -277,7 +279,8 @@ EOF_NGX
 }
 
 wait_ready() {
-  for _ in $(seq 1 100); do
+  local i
+  for ((i=0; i<100; i++)); do
     if curl -fsS --max-time 5 http://127.0.0.1:5678/healthz/readiness >/dev/null 2>&1; then return 0; fi
     sleep 3
   done
@@ -292,7 +295,9 @@ start_stack() {
 
 enable_https() {
   log "Requesting the Let's Encrypt certificate..."
-  certbot certonly --webroot --webroot-path "$ACME_WEBROOT" --agree-tos --non-interactive --keep-until-expiring -m "$EMAIL" -d "$DOMAIN" >/dev/null
+  certbot certonly --webroot --webroot-path "$ACME_WEBROOT" \
+    --agree-tos --non-interactive --no-eff-email --keep-until-expiring \
+    -m "$EMAIL" -d "$DOMAIN" >/dev/null
 
   cat >"$NGINX_CONF" <<EOF_NGX
 map \$http_upgrade \$one_shot_connection_upgrade {
@@ -315,6 +320,11 @@ server {
 
     ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_tickets off;
 
     location / {
         proxy_pass http://127.0.0.1:5678;
@@ -338,10 +348,13 @@ EOF_NGX
   install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
   cat >/etc/letsencrypt/renewal-hooks/deploy/one-shot-n8n-nginx <<'HOOK'
 #!/usr/bin/env bash
-set -e
+set -Eeuo pipefail
 systemctl reload nginx
 HOOK
   chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/one-shot-n8n-nginx
+  # Enable certbot auto-renewal timer when available (apt certbot). The snap
+  # variant of certbot manages its own renewal timer (snap.certbot.renew.timer)
+  # and does not expose a certbot.timer systemd unit; the || true handles both.
   systemctl enable --now certbot.timer >/dev/null 2>&1 || true
 }
 
