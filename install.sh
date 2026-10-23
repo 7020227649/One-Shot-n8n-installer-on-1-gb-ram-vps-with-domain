@@ -42,6 +42,24 @@ heal_package_manager() {
   apt-get install -f -y >/dev/null 2>&1 || true
 }
 
+configure_firewall() {
+  log "Configuring OS firewall to permit inbound HTTP (port 80) and HTTPS (port 443)..."
+  if command -v ufw >/dev/null 2>&1; then
+    if ufw status 2>/dev/null | grep -q "Status: active"; then
+      ufw allow 80/tcp >/dev/null 2>&1 || true
+      ufw allow 443/tcp >/dev/null 2>&1 || true
+    fi
+  fi
+  if command -v iptables >/dev/null 2>&1; then
+    # Oracle Cloud and minimal Ubuntu images often have iptables default REJECT rules
+    iptables -C INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || true
+    iptables -C INPUT -p tcp --dport 443 -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport 443 -j ACCEPT 2>/dev/null || true
+    if command -v netfilter-persistent >/dev/null 2>&1; then
+      netfilter-persistent save >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
 check_system() {
   [[ -r /etc/os-release ]] || die "Cannot detect operating system."
   # shellcheck disable=SC1091
@@ -335,10 +353,22 @@ start_stack() {
 }
 
 enable_https() {
-  log "Requesting the Let's Encrypt certificate..."
-  certbot certonly --webroot --webroot-path "$ACME_WEBROOT" \
-    --agree-tos --non-interactive --no-eff-email --keep-until-expiring \
-    -m "$EMAIL" -d "$DOMAIN" >/dev/null
+  configure_firewall
+
+  log "Requesting the Let's Encrypt certificate for $DOMAIN..."
+  if ! certbot certonly --webroot --webroot-path "$ACME_WEBROOT" \
+      --agree-tos --non-interactive --no-eff-email --keep-until-expiring \
+      -m "$EMAIL" -d "$DOMAIN"; then
+    cat <<'ERR_FIREWALL' >&2
+
+[error] Let's Encrypt could not verify the domain.
+Likely causes:
+1. Inbound TCP port 80/443 is blocked by cloud firewall (Oracle Cloud Security List, AWS Security Group, GCP Firewall).
+   If using Oracle Cloud (OCI): Go to OCI Console -> Networking -> Virtual Cloud Networks -> Default Security List -> Add Ingress Rule (Source: 0.0.0.0/0, Destination Port: 80, 443).
+2. The DNS A/AAAA record does not point to this VPS's public IP address.
+ERR_FIREWALL
+    die "Certificate issuance failed."
+  fi
 
   cat >"$NGINX_CONF" <<EOF_NGX
 map \$http_upgrade \$one_shot_connection_upgrade {
@@ -407,6 +437,9 @@ start_persistent_install() {
   if systemctl is-active --quiet "$INSTALLER_UNIT"; then
     log "The installer is already running as a background service."
     printf 'Follow progress: sudo journalctl -fu %s\n' "$INSTALLER_UNIT"
+    if [[ -t 1 ]] || [[ -r /dev/tty ]]; then
+      journalctl -fu "$INSTALLER_UNIT" || true
+    fi
     return 0
   fi
 
@@ -436,6 +469,12 @@ start_persistent_install() {
   printf '\nThe installation is running independently of this SSH connection.\n'
   printf 'View progress: sudo journalctl -fu %s\n' "$INSTALLER_UNIT"
   printf 'View recent logs: sudo journalctl -u %s -n 100 --no-pager\n' "$INSTALLER_UNIT"
+
+  # If attached to terminal, stream live installation progress immediately
+  if [[ -t 1 ]] || [[ -r /dev/tty ]]; then
+    printf '\nStreaming live installation progress (press Ctrl+C anytime to detach safely):\n\n'
+    journalctl -fu "$INSTALLER_UNIT" || true
+  fi
 }
 
 main() {
@@ -446,6 +485,9 @@ main() {
   if [[ ${ONE_SHOT_INSTALLER_SERVICE:-0} != 1 ]] && systemctl is-active --quiet "$INSTALLER_UNIT"; then
     log "The installer is already running independently of SSH."
     printf 'Follow progress: sudo journalctl -fu %s\n' "$INSTALLER_UNIT"
+    if [[ -t 1 ]] || [[ -r /dev/tty ]]; then
+      journalctl -fu "$INSTALLER_UNIT" || true
+    fi
     return 0
   fi
 
