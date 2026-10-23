@@ -60,6 +60,27 @@ configure_firewall() {
   fi
 }
 
+stop_previous_services() {
+  log "Stopping any previously running n8n or conflicting services for a clean installation..."
+  # Stop and remove any prior one-shot-n8n container
+  if command -v docker >/dev/null 2>&1; then
+    docker stop one-shot-n8n >/dev/null 2>&1 || true
+    docker rm -f one-shot-n8n >/dev/null 2>&1 || true
+  fi
+
+  # Stop conflicting web servers holding port 80/443 (e.g. Apache2, Caddy)
+  if systemctl is-active --quiet apache2 2>/dev/null; then
+    log "Stopping active Apache2 service to free port 80/443..."
+    systemctl stop apache2 >/dev/null 2>&1 || true
+    systemctl disable apache2 >/dev/null 2>&1 || true
+  fi
+  if systemctl is-active --quiet caddy 2>/dev/null; then
+    log "Stopping active Caddy service to free port 80/443..."
+    systemctl stop caddy >/dev/null 2>&1 || true
+    systemctl disable caddy >/dev/null 2>&1 || true
+  fi
+}
+
 check_system() {
   [[ -r /etc/os-release ]] || die "Cannot detect operating system."
   # shellcheck disable=SC1091
@@ -138,14 +159,8 @@ check_ports() {
     fi
   fi
 
-  # Handle dirty VPS edge case: if default Apache2 is running, disable it to prevent port 80/443 conflicts.
-  if systemctl is-active --quiet apache2 2>/dev/null; then
-    if [[ ! -f "$NGINX_CONF" ]]; then
-      log "Stopping default Apache2 service to allow Nginx reverse proxy on ports 80/443..."
-      systemctl stop apache2 >/dev/null 2>&1 || true
-      systemctl disable apache2 >/dev/null 2>&1 || true
-    fi
-  fi
+  # Stop conflicting Apache2 or other services if holding port 80/443
+  stop_previous_services
 
   for port in 80 443; do
     if ss -H -ltn "( sport = :${port} )" | grep -q .; then
@@ -263,8 +278,15 @@ write_env() {
   if [[ -f "$ENV_FILE" ]]; then
     # shellcheck disable=SC1090
     source "$ENV_FILE"
-    [[ ${N8N_DOMAIN:-} == "$DOMAIN" ]] || die "An existing installation uses domain ${N8N_DOMAIN:-unknown}. Refusing to replace it."
-    return
+    if [[ ${N8N_DOMAIN:-} == "$DOMAIN" ]]; then
+      # Existing domain: preserve configuration and version
+      return
+    else
+      log "Updating domain configuration from ${N8N_DOMAIN:-unknown} to $DOMAIN..."
+      sed -i -E "s/^N8N_DOMAIN=.*/N8N_DOMAIN=$DOMAIN/" "$ENV_FILE"
+      sed -i -E "s/^N8N_EMAIL=.*/N8N_EMAIL=$EMAIL/" "$ENV_FILE"
+      return
+    fi
   fi
   log "Resolving the latest stable n8n release..."
   local version
@@ -434,13 +456,10 @@ start_persistent_install() {
   command -v systemd-run >/dev/null 2>&1 || die "systemd-run is required to keep installation running after SSH disconnects."
   command -v journalctl >/dev/null 2>&1 || die "journalctl is required to inspect installation progress."
 
-  if systemctl is-active --quiet "$INSTALLER_UNIT"; then
-    log "The installer is already running as a background service."
-    printf 'Follow progress: sudo journalctl -fu %s\n' "$INSTALLER_UNIT"
-    if [[ -t 1 ]] || [[ -r /dev/tty ]]; then
-      journalctl -fu "$INSTALLER_UNIT" || true
-    fi
-    return 0
+  # Stop any previously running background installer service for a fresh install
+  if systemctl is-active --quiet "$INSTALLER_UNIT" 2>/dev/null; then
+    log "Stopping previously running background installer ($INSTALLER_UNIT) for fresh run..."
+    systemctl stop "$INSTALLER_UNIT" >/dev/null 2>&1 || true
   fi
 
   # Reset any failed prior transient unit state
@@ -479,17 +498,6 @@ start_persistent_install() {
 
 main() {
   require_root
-
-  # A reconnect should not start a second installation or prompt for values
-  # while the detached systemd service is already doing the work.
-  if [[ ${ONE_SHOT_INSTALLER_SERVICE:-0} != 1 ]] && systemctl is-active --quiet "$INSTALLER_UNIT"; then
-    log "The installer is already running independently of SSH."
-    printf 'Follow progress: sudo journalctl -fu %s\n' "$INSTALLER_UNIT"
-    if [[ -t 1 ]] || [[ -r /dev/tty ]]; then
-      journalctl -fu "$INSTALLER_UNIT" || true
-    fi
-    return 0
-  fi
 
   validate_args "$@"
   check_system
